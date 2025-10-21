@@ -547,7 +547,7 @@ class OllamaCV(Base):
         except Exception as e:
             return "**ERROR**: " + str(e), 0
 
-    def chat(self, system, history, gen_conf, images=[]):
+    def chat(self, system, history, gen_conf, images=None):
         try:
             response = self.client.chat(
                 model=self.model_name,
@@ -561,7 +561,7 @@ class OllamaCV(Base):
         except Exception as e:
             return "**ERROR**: " + str(e), 0
 
-    def chat_streamly(self, system, history, gen_conf, images=[]):
+    def chat_streamly(self, system, history, gen_conf, images=None):
         ans = ""
         try:
             response = self.client.chat(
