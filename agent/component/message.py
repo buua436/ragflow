@@ -41,6 +41,7 @@ class MessageParam(ComponentParamBase):
         self.content = []
         self.stream = True
         self.output_format = None  # default output format
+        self.need_TTS = False
         self.outputs = {
             "content": {
                 "type": "str"
