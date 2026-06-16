@@ -255,8 +255,31 @@ def login_required(func: Callable[P, Awaitable[T]] = None, auth_types=None) -> C
     """
 
     def decorator(func: Callable[P, Awaitable[T]]) -> Callable[P, Awaitable[T]]:
+        if inspect.iscoroutinefunction(func):
+            @wraps(func)
+            async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+                timing_enabled = os.getenv("RAGFLOW_API_TIMING")
+                t_start = time.perf_counter() if timing_enabled else None
+                user = _load_user(auth_types)
+                if timing_enabled:
+                    logging.info(
+                        "api_timing login_required auth_ms=%.2f path=%s",
+                        (time.perf_counter() - t_start) * 1000,
+                        request.path,
+                    )
+                if not user:  # or not session.get("_user_id"):
+                    if _normalize_auth_types(auth_types) == {AUTH_BETA}:
+                        return get_json_result(
+                            code=RetCode.DATA_ERROR,
+                            message=getattr(g, "auth_error_message", None) or "Authorization is not valid!",
+                        )
+                    raise QuartAuthUnauthorized()
+                return await current_app.ensure_async(func)(*args, **kwargs)
+
+            return wrapper
+
         @wraps(func)
-        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
+        def wrapper(*args: P.args, **kwargs: P.kwargs) -> T:
             timing_enabled = os.getenv("RAGFLOW_API_TIMING")
             t_start = time.perf_counter() if timing_enabled else None
             user = _load_user(auth_types)
@@ -273,7 +296,7 @@ def login_required(func: Callable[P, Awaitable[T]] = None, auth_types=None) -> C
                         message=getattr(g, "auth_error_message", None) or "Authorization is not valid!",
                     )
                 raise QuartAuthUnauthorized()
-            return await current_app.ensure_async(func)(*args, **kwargs)
+            return func(*args, **kwargs)
 
         return wrapper
 
