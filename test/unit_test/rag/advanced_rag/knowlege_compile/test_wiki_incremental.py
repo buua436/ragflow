@@ -582,7 +582,7 @@ async def test_mode_a_incremental_creates_low_claim_concept():
 
     with (
         patch(
-            "rag.advanced_rag.knowlege_compile.wiki_incremental._wiki_mode_a_refine",
+            "rag.advanced_rag.knowlege_compile.wiki_incremental._wiki_refine_page",
             new_callable=AsyncMock,
             return_value={"page_id": "concept/brand-new-concept"},
         ) as mock_refine,
@@ -646,7 +646,7 @@ async def test_mode_a_compiles_entity_and_concept_pages():
 
     with (
         patch(
-            "rag.advanced_rag.knowlege_compile.wiki_incremental._wiki_mode_a_refine",
+            "rag.advanced_rag.knowlege_compile.wiki_incremental._wiki_refine_page",
             new_callable=AsyncMock,
             return_value={"page_id": "x"},
         ) as mock_refine,
@@ -966,7 +966,10 @@ async def test_finalize_writes_outlinks():
         cond = args[0][0]
         upd = args[0][1]
         if cond.get("slug_kwd") == "concept/A":
-            assert upd["outlinks_kwd"] == '["concept/B"]', f"Got {upd['outlinks_kwd']}"
+            # outlinks_kwd is a *_kwd field: Infinity shreds json.dumps strings
+            # on read-back, so _wiki_finalize writes a native list (mirroring
+            # the old-mode writer) which Infinity stores/reads back correctly.
+            assert upd["outlinks_kwd"] == ["concept/B"], f"Got {upd['outlinks_kwd']}"
             assert upd["outlinks_int"] == 1
             break
     else:
@@ -1012,7 +1015,7 @@ async def test_finalize_auto_links_mentions():
     # "Apple" mentioned in Google page → auto-linked exactly once + outlink
     # recorded, and rendered into the navigable artifact-link form.
     assert "[Apple](artifact/kb1/entity/Apple)" in google_upd["md_with_weight"], google_upd["md_with_weight"]
-    assert "entity/Apple" in (google_upd["outlinks_kwd"] or "")
+    assert "entity/Apple" in (google_upd["outlinks_kwd"] or []), google_upd["outlinks_kwd"]
     assert google_upd["outlinks_int"] == 1
 
 
@@ -1165,7 +1168,7 @@ async def test_finalize_links_via_map_relations():
             xiaoliang_upd = args[0][1]
             break
     assert xiaoliang_upd is not None, "entity/肖亮 not updated"
-    assert "entity/肖立" in (xiaoliang_upd["outlinks_kwd"] or ""), xiaoliang_upd["outlinks_kwd"]
+    assert "entity/肖立" in (xiaoliang_upd["outlinks_kwd"] or []), xiaoliang_upd["outlinks_kwd"]
     assert xiaoliang_upd["outlinks_int"] == 1
     # The relation edge must be injected into the page body. It is stored either
     # as a raw [[entity/肖立]] or (after the link transformer runs) as the
