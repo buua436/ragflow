@@ -36,7 +36,7 @@ Design notes:
   ``parser_config.compilation_template_group_id`` to a template list
   via the shared parser-config helper and
   ``CompilationTemplateGroupService.resolve_template_ids``.
-* The persistence helpers (``persist_wiki_pages_to_es`` etc.) are
+* The persistence helpers (``persist_wiki_pages`` etc.) are
   exposed at module level for testing but are only called from
   :func:`run_wiki` in production.
 """
@@ -116,6 +116,10 @@ WIKI_DERIVED_COMPILE_KWDS = (
     "wiki_entity",
     "wiki_relation",
     "wiki_page_graph",
+    # Canonical entity rows carry a source_doc_ids array; on doc deletion they
+    # must be shrunk (or dropped) too, otherwise the canonical index keeps
+    # referencing removed docs and later incremental merges re-import them.
+    "wiki_canonical_entity",
 )
 
 
@@ -371,6 +375,23 @@ async def _wiki_delete_deleted_doc_state(
         )
         return
 
+    # 1b. doc_page_source rows are keyed by doc_id too — delete outright.
+    try:
+        await thread_pool_exec(
+            settings.docStoreConn.delete,
+            {
+                "compile_kwd": ["wiki_doc_page_source"],
+                "doc_id": sorted(deleted_doc_ids),
+            },
+            index,
+            kb_id,
+        )
+    except Exception:
+        logging.exception(
+            "wiki: failed to delete doc_page_source rows for removed docs in kb=%s",
+            kb_id,
+        )
+
     # 2. Derived KB-scoped rows: reference-counted self-healing backstop for
     # the eager delete-time cleanup (DocumentService.remove_wiki_products).
     # Read every row referencing any deleted doc, drop the ones left with no
@@ -455,6 +476,106 @@ async def _wiki_delete_deleted_doc_state(
         len(to_delete),
         len(to_shrink),
     )
+
+
+# ----- mode (plan) persistence & full reset ----------------------------------
+
+
+def _wiki_mode_meta_id(kb_id: str) -> str:
+    """Stable row id for the KB-level mode (plan) meta record."""
+    return f"wiki_mode_meta_{kb_id}"
+
+
+async def _wiki_load_mode_plan(tenant_id: str, kb_id: str) -> bool | None:
+    """Return the plan (Mode B) value recorded by the previous build, or None
+    if this KB has never recorded a mode (e.g. first ever build)."""
+    from common.doc_store.doc_store_base import OrderByExpr
+
+    index = search.index_name(tenant_id)
+    if not settings.docStoreConn.index_exist(index, kb_id):
+        return None
+    try:
+        res = await thread_pool_exec(
+            settings.docStoreConn.search,
+            ["plan_kwd"],
+            [],
+            {"compile_kwd": ["wiki_mode_meta"], "id": [_wiki_mode_meta_id(kb_id)]},
+            [],
+            OrderByExpr(),
+            0,
+            1,
+            index,
+            [kb_id],
+        )
+        fm = settings.docStoreConn.get_fields(res, ["plan_kwd"]) or {}
+        for row in fm.values():
+            val = row.get("plan_kwd")
+            if isinstance(val, list):
+                val = val[0] if val else ""
+            val = str(val or "").strip()
+            if val in ("true", "1", "yes"):
+                return True
+            if val in ("false", "0", "no"):
+                return False
+    except Exception:
+        logging.exception("wiki: failed to load mode meta for kb=%s", kb_id)
+    return None
+
+
+async def _wiki_save_mode_plan(tenant_id: str, kb_id: str, plan: bool) -> None:
+    index = search.index_name(tenant_id)
+    row = {
+        "id": _wiki_mode_meta_id(kb_id),
+        "compile_kwd": "wiki_mode_meta",
+        "plan_kwd": "true" if plan else "false",
+        "kb_id": kb_id,
+        "create_timestamp_flt": float(__import__("time").time()),
+    }
+    try:
+        await thread_pool_exec(
+            settings.docStoreConn.insert,
+            [row],
+            index,
+            kb_id,
+        )
+    except Exception:
+        logging.exception("wiki: failed to save mode meta for kb=%s", kb_id)
+
+
+async def _wiki_reset_all_wiki_state(tenant_id: str, kb_id: str) -> None:
+    """Drop every wiki-derived row for the KB (canonical, pages, relations,
+    entities, plan/draft/reduce, topics, doc_page_source, mode meta). Used when
+    the plan (mode) setting toggles: Mode A and Mode B pages are structurally
+    different and cannot be merged incrementally, so a mode switch must rebuild
+    from a clean slate."""
+
+    index = search.index_name(tenant_id)
+    if not settings.docStoreConn.index_exist(index, kb_id):
+        return
+    all_kwds = [
+        "wiki_canonical_entity",
+        "wiki_page",
+        "wiki_entity",
+        "wiki_relation",
+        "wiki_page_graph",
+        "wiki_page_topic",
+        "wiki_compilation_plan",
+        "wiki_reduce_result",
+        "wiki_page_draft",
+        "wiki_doc_page_source",
+        "wiki_map_extract",
+        "wiki_mode_meta",
+    ]
+    # Delete in one bulk call using compile_kwd IN filter.
+    try:
+        await thread_pool_exec(
+            settings.docStoreConn.delete,
+            {"compile_kwd": all_kwds},
+            index,
+            kb_id,
+        )
+    except Exception:
+        logging.exception("wiki: failed to reset all wiki state for kb=%s", kb_id)
 
 
 def _wiki_topic_from_page(page: Dict, fallback: str = "") -> str:
@@ -570,12 +691,12 @@ async def _ensure_wiki_topic_rows(
 # ----- persistence ---------------------------------------------------
 
 
-async def persist_wiki_pages_to_es(
+async def persist_wiki_pages(
     ctx: TaskContext,
     pages: List[Dict],
     embd_mdl,
 ) -> None:
-    """Insert one ES row per generated artifact page using the
+    """Insert one doc-store row per generated artifact page using the
     knowledge-compilation schema:
 
       id                  xxh64(kb_id + ":" + slug)
@@ -933,11 +1054,11 @@ def build_wiki_page_graph(
     return entity_rows, relation_rows
 
 
-async def persist_wiki_page_graph_to_es(
+async def persist_wiki_page_graph(
     ctx: TaskContext,
     pages: List[Dict],
 ) -> None:
-    """Materialize and store the per-entity / per-relation ES rows
+    """Materialize and store the per-entity / per-relation doc-store rows
     derived from artifact pages.
 
     Writes two row types — both delete-then-insert for idempotent
@@ -1341,13 +1462,13 @@ async def run_wiki(
 
     # 6. Persist searchable wiki_page rows.
     try:
-        await persist_wiki_pages_to_es(ctx=ctx, pages=pages or [], embd_mdl=embedding_model)
+        await persist_wiki_pages(ctx=ctx, pages=pages or [], embd_mdl=embedding_model)
     except Exception:
-        logging.exception("wiki: ES persist failed for kb %s", ctx.kb_id)
+        logging.exception("wiki: persist failed for kb %s", ctx.kb_id)
 
     # 7. Materialize the canvas graph from the refined pages.
     try:
-        await persist_wiki_page_graph_to_es(ctx=ctx, pages=pages or [])
+        await persist_wiki_page_graph(ctx=ctx, pages=pages or [])
     except Exception:
         logging.exception("wiki: page-graph persist failed for kb %s", ctx.kb_id)
 
@@ -1438,6 +1559,37 @@ async def run_wiki_incremental(
     if not eligible and not is_incremental:
         progress(1.0, "No documents configured for wiki compilation.")
         return
+
+    # Re-resolve plan (Mode B) from the ELIGIBLE docs' templates. Each eligible
+    # doc resolves to a wiki template either via its own parser_config or via
+    # its ingestion pipeline (doc.pipeline_id → pipeline dsl → compiler →
+    # template). The task handler's `plan` param only looks at the KB-level
+    # parser_config and therefore misses the pipeline path; re-derive it here so
+    # a pipeline-bound template with plan=yes actually enables Mode B.
+    if not plan:
+        try:
+            for _doc, tid in eligible:
+                tpl = CompilationTemplateService.get_saved(tid, ctx.tenant_id)
+                cfg = (tpl.get("config") or {}) if tpl else {}
+                if isinstance(cfg, dict) and cfg.get("plan") in (True, "yes", "true"):
+                    plan = True
+                    break
+        except Exception:
+            pass  # keep the handler-provided plan as fallback
+
+    # Mode-change detection. plan toggling (A↔B) is a config change: the page
+    # structures differ fundamentally (single-entity pages vs PLAN-grouped
+    # pages), so switching modes must reset all wiki-derived state and rebuild
+    # from scratch instead of incrementally mixing old-mode and new-mode pages.
+    prev_plan = await _wiki_load_mode_plan(ctx.tenant_id, ctx.kb_id)
+    if prev_plan is not None and bool(prev_plan) != bool(plan) and is_incremental:
+        progress(0.05, f"Mode switched (plan: {'on' if prev_plan else 'off'} -> {'on' if plan else 'off'}); rebuilding wiki from scratch...")
+        await _wiki_reset_all_wiki_state(ctx.tenant_id, ctx.kb_id)
+        # Everything is gone; this is now a first build.
+        is_incremental = False
+        existing_map_doc_ids = set()
+        deleted_doc_ids = set()
+    await _wiki_save_mode_plan(ctx.tenant_id, ctx.kb_id, bool(plan))
 
     # 3. Resolve chat model
     llm_bundle_cache: dict[str, LLMBundle] = {}
@@ -1563,7 +1715,36 @@ async def run_wiki_incremental(
         # chunk now looks "unchanged"), fall through — ``map_results=None`` below
         # makes wiki_compile_incremental rebuild pages from the stored extracts.
         if not existing_map_doc_ids or await _wiki_has_compiled_pages(ctx.tenant_id, ctx.kb_id):
-            progress(1.0, "Wiki is up to date; nothing to compile.")
+            # No compile needed, but still (re)group existing pages under topics —
+            # cheap (embed + stamp) and it backfills pages built before topic
+            # grouping existed. Topic labels are loaded from the persisted MAP rows.
+            from rag.advanced_rag.knowlege_compile.wiki_incremental import (
+                _wiki_assign_topics,
+                _wiki_finalize,
+                _wiki_load_pages_for_graph,
+            )
+
+            progress(0.9, "Wiki is up to date; recomputing cross-references + topics ...")
+            # FINALIZE recomputes outlinks / auto-links / dead-link cleanup from
+            # the persisted pages (zero LLM cost) so a re-run backfills graph
+            # edges for pages written before auto-linking existed.
+            try:
+                await _wiki_finalize(ctx.tenant_id, ctx.kb_id, embedding_model)
+            except Exception:
+                logging.exception("wiki: up-to-date FINALIZE failed for kb=%s", ctx.kb_id)
+            await _wiki_assign_topics(embedding_model, ctx.tenant_id, ctx.kb_id, callback=lambda p, msg: progress(p, msg))
+
+            # (Re)materialize the canvas graph so pages built before graph
+            # persistence existed (or a graph lost to an interrupted run) still
+            # render. Reload pages → project → persist wiki_entity/relation.
+            try:
+                graph_pages = await _wiki_load_pages_for_graph(ctx.tenant_id, ctx.kb_id)
+                if graph_pages:
+                    await persist_wiki_page_graph(ctx=ctx, pages=graph_pages)
+            except Exception:
+                logging.exception("wiki: up-to-date page-graph persist failed for kb=%s", ctx.kb_id)
+
+            progress(1.0, "Wiki is up to date.")
             return
         logging.info("wiki: MAP rows exist but no pages found for kb=%s; rebuilding from stored extracts.", ctx.kb_id)
 
@@ -1587,6 +1768,21 @@ async def run_wiki_incremental(
         deleted_doc_ids=deleted_doc_ids or None,
         callback=lambda p, msg: progress(p, msg),
     )
+
+    # 6. Materialize the canvas graph from the compiled pages. The incremental
+    # entry point persists wiki_page rows internally (without returning the page
+    # list), so reload them and project onto the graph shape that
+    # build_wiki_page_graph expects.
+    try:
+        from rag.advanced_rag.knowlege_compile.wiki_incremental import (
+            _wiki_load_pages_for_graph,
+        )
+
+        graph_pages = await _wiki_load_pages_for_graph(ctx.tenant_id, ctx.kb_id)
+        if graph_pages:
+            await persist_wiki_page_graph(ctx=ctx, pages=graph_pages)
+    except Exception:
+        logging.exception("wiki: page-graph persist failed for kb=%s", ctx.kb_id)
 
     progress(1.0, f"Wiki done: +{summary.get('pages_created', 0)} ~{summary.get('pages_modified', 0)} -{summary.get('pages_deleted', 0)}")
     if summary.get("errors"):
