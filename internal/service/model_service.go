@@ -977,7 +977,8 @@ func verifyProviderModel(ctx context.Context, driver modelModule.ModelDriver, pr
 				_, err = driver.Rerank(ctx, &modelName, rerankRequest, apiConfig, &modelModule.RerankConfig{}, nil)
 			case "tts":
 				content := "hello"
-				_, err = driver.AudioSpeech(ctx, &modelName, &content, apiConfig, nil, nil)
+				ttsModel := modelModule.NewTTSModel(driver, &modelName, apiConfig)
+				_, err = ttsModel.Speech(ctx, &content, nil, nil)
 			case "asr":
 				err = verifyASRModel(ctx, driver, modelName, apiConfig)
 			case "ocr":
@@ -1099,7 +1100,8 @@ func verifyASRModel(ctx context.Context, driver modelModule.ModelDriver, modelNa
 	}
 	tmpFile.Close()
 
-	resp, err := driver.TranscribeAudio(ctx, &modelName, &tmpPath, apiConfig, nil, nil)
+	asrModel := modelModule.NewASRModel(driver, &modelName, apiConfig)
+	resp, err := asrModel.Transcribe(ctx, &tmpPath, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -2755,7 +2757,8 @@ func (m *ModelProviderService) TranscribeAudio(ctx context.Context, providerName
 	}
 
 	var response *modelModule.ASRResponse
-	response, err = modelDriver.TranscribeAudio(ctx, modelName, audioFile, apiConfig, modelConfig, nil)
+	asrModel := modelModule.NewASRModel(modelDriver, modelName, apiConfig)
+	response, err = asrModel.Transcribe(ctx, audioFile, modelConfig, nil)
 	if err != nil {
 		return nil, common.CodeServerError, err
 	}
@@ -2811,7 +2814,8 @@ func (m *ModelProviderService) TranscribeAudioStream(ctx context.Context, provid
 		}
 	}
 
-	err = modelDriver.TranscribeAudioWithSender(ctx, modelName, audioFile, apiConfig, modelConfig, nil, sender)
+	asrModel := modelModule.NewASRModel(modelDriver, modelName, apiConfig)
+	err = asrModel.TranscribeWithSender(ctx, audioFile, modelConfig, nil, sender)
 	if err != nil {
 		return common.CodeServerError, err
 	}
@@ -2844,7 +2848,8 @@ func (m *ModelProviderService) AudioSpeech(ctx context.Context, providerName, in
 			modelConfig = &modelModule.TTSConfig{}
 		}
 		var response *modelModule.TTSResponse
-		response, derr = target.Driver.AudioSpeech(ctx, &target.ModelName, audioContent, target.APIConfig, modelConfig, nil)
+		ttsModel := modelModule.NewTTSModel(target.Driver, &target.ModelName, target.APIConfig)
+		response, derr = ttsModel.Speech(ctx, audioContent, modelConfig, nil)
 		if derr != nil {
 			return nil, common.CodeServerError, derr
 		}
@@ -2887,7 +2892,8 @@ func (m *ModelProviderService) AudioSpeech(ctx context.Context, providerName, in
 	}
 
 	var response *modelModule.TTSResponse
-	response, err = modelDriver.AudioSpeech(ctx, modelName, audioContent, apiConfig, modelConfig, nil)
+	ttsModel := modelModule.NewTTSModel(modelDriver, modelName, apiConfig)
+	response, err = ttsModel.Speech(ctx, audioContent, modelConfig, nil)
 	if err != nil {
 		return nil, common.CodeServerError, err
 	}
@@ -2942,7 +2948,8 @@ func (m *ModelProviderService) AudioSpeechStream(ctx context.Context, providerNa
 		}
 	}
 
-	err = modelDriver.AudioSpeechWithSender(ctx, modelName, audioContent, apiConfig, modelConfig, nil, sender)
+	ttsModel := modelModule.NewTTSModel(modelDriver, modelName, apiConfig)
+	err = ttsModel.SpeechWithSender(ctx, audioContent, modelConfig, nil, sender)
 	if err != nil {
 		return common.CodeServerError, err
 	}
