@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 )
 
 func setupChatChannelServiceTestDB(t *testing.T) *gorm.DB {
@@ -39,6 +41,7 @@ func createServiceTestDialog(t *testing.T, db *gorm.DB, id, tenantID, name strin
 	t.Helper()
 
 	dialogName := name
+	status := string(entity.StatusValid)
 	dialog := &entity.Chat{
 		ID:           id,
 		TenantID:     tenantID,
@@ -48,6 +51,7 @@ func createServiceTestDialog(t *testing.T, db *gorm.DB, id, tenantID, name strin
 		PromptType:   "simple",
 		PromptConfig: entity.JSONMap{"system": "sys"},
 		KBIDs:        entity.JSONSlice{"kb-1"},
+		Status:       &status,
 	}
 	if err := db.Create(dialog).Error; err != nil {
 		t.Fatalf("failed to create dialog: %v", err)
@@ -197,11 +201,33 @@ func TestChatChannelServiceUpdateChatChannelRejectsCrossTenantDialog(t *testing.
 	_, code, err := NewChatChannelService().UpdateChatChannel(ctx, "tenant-1", "cc-1", map[string]interface{}{
 		"chat_id": "dialog-2",
 	})
-	if code != common.CodeAuthenticationError {
-		t.Fatalf("expected authentication error, got %v", code)
+	if code != common.CodeNotFound {
+		t.Fatalf("expected hidden not-found error, got %v", code)
 	}
-	if err == nil || !strings.Contains(err.Error(), "no authorization") {
-		t.Fatalf("expected authorization error, got %v", err)
+	if !errors.Is(err, permission.ErrPermissionDenied) {
+		t.Fatalf("expected permission denial, got %v", err)
+	}
+}
+
+func TestChatChannelServiceUpdateChatChannelRequiresChannelOwnerAccess(t *testing.T) {
+	db := setupChatChannelServiceTestDB(t)
+	createServiceTestDialog(t, db, "dialog-2", "tenant-2", "Assistant B")
+	createServiceTestChannel(t, db, &entity.ChatChannel{
+		ID:       "cc-1",
+		TenantID: "tenant-1",
+		Name:     "bot-a",
+		Channel:  "wecom",
+		Config:   entity.JSONMap{"token": "old"},
+		Status:   1,
+	})
+	createServiceTestMembership(t, db, "user-1", "tenant-1")
+	createServiceTestMembership(t, db, "user-1", "tenant-2")
+
+	_, code, err := NewChatChannelService().UpdateChatChannel(t.Context(), "user-1", "cc-1", map[string]interface{}{
+		"chat_id": "dialog-2",
+	})
+	if code != common.CodeNotFound || !errors.Is(err, permission.ErrPermissionDenied) {
+		t.Fatalf("UpdateChatChannel() = (%d, %v), want hidden denial because channel owner cannot use Chat", code, err)
 	}
 }
 

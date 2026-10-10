@@ -20,6 +20,7 @@ import (
 	"ragflow/internal/engine"
 	enginetypes "ragflow/internal/engine/types"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 )
 
 func TestIsMessageDocumentNotFound(t *testing.T) {
@@ -115,13 +116,13 @@ func TestValidateMemorySearchModels(t *testing.T) {
 	}
 }
 
-func TestRequireMemoryAccessReturnsCanceledContext(t *testing.T) {
+func TestMemoryWithAccessReturnsCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
 	err := ctx.Err()
-	if _, gotErr := NewMemoryService().requireMemoryAccess(ctx, "user-1", "memory-1"); !errors.Is(gotErr, err) {
-		t.Fatalf("requireMemoryAccess error = %v, want %v", gotErr, err)
+	if _, gotErr := NewMemoryService().memoryWithAccess(ctx, "user-1", "memory-1", permission.OperationRead); !errors.Is(gotErr, err) {
+		t.Fatalf("memoryWithAccess error = %v, want %v", gotErr, err)
 	}
 }
 
@@ -768,7 +769,7 @@ func seedMemoryMessages(t *testing.T) {
 	}
 }
 
-func TestSaveAgentMessageBypassesRequestAccessFilter(t *testing.T) {
+func TestSaveAgentMessageChecksMemoryAccess(t *testing.T) {
 	setupMemoryMessageTestDB(t)
 
 	if err := dao.DB.Create(&entity.Memory{
@@ -794,25 +795,27 @@ func TestSaveAgentMessageBypassesRequestAccessFilter(t *testing.T) {
 	}
 
 	ok, detail, err := svc.AddMessage(t.Context(), "", []string{"mem-owned"}, msg)
-	if err != nil {
-		t.Fatalf("AddMessage: %v", err)
-	}
-	if ok || detail != "Memory not found." {
-		t.Fatalf("AddMessage with empty current user = (%v, %q), want permission-filtered not found", ok, detail)
+	if ok || !errors.Is(err, permission.ErrUnauthenticated) {
+		t.Fatalf("AddMessage with empty current user = (%v, %q, %v), want unauthenticated error", ok, detail, err)
 	}
 
-	ok, detail, err = svc.saveAgentMessage(t.Context(), []string{"mem-owned"}, msg)
+	ok, detail, err = svc.saveAgentMessage(t.Context(), "user-2", []string{"mem-owned"}, msg)
 	if err != nil {
-		t.Fatalf("saveAgentMessage: %v", err)
+		t.Fatalf("saveAgentMessage as outsider: %v", err)
+	}
+	if ok || detail != "Memory not found." {
+		t.Fatalf("saveAgentMessage as outsider = (%v, %q), want hidden memory not found", ok, detail)
+	}
+
+	ok, detail, err = svc.saveAgentMessage(t.Context(), "user-1", []string{"mem-owned"}, msg)
+	if err != nil {
+		t.Fatalf("saveAgentMessage as owner: %v", err)
 	}
 	if ok {
-		t.Fatal("saveAgentMessage unexpectedly succeeded without a message store")
-	}
-	if strings.Contains(detail, "Memory not found") {
-		t.Fatalf("saveAgentMessage was filtered by request user: %q", detail)
+		t.Fatal("saveAgentMessage as owner unexpectedly succeeded without a message store")
 	}
 	if !strings.Contains(detail, "message store is not initialized") {
-		t.Fatalf("saveAgentMessage detail = %q, want message-store failure after memory lookup", detail)
+		t.Fatalf("saveAgentMessage as owner detail = %q, want message-store failure after memory lookup", detail)
 	}
 }
 

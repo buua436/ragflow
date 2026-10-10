@@ -1213,6 +1213,9 @@ func (h *DatasetsHandler) SearchDataset(c *gin.Context) {
 
 	resp, err := searchService.SearchDataset(ctx, datasetID, user.ID, &req)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, false) {
+			return
+		}
 		common.ResponseWithCodeData(c, common.CodeDataError, nil, err.Error())
 		return
 	}

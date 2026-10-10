@@ -303,6 +303,9 @@ func (e *evaluation) resolveResource(ctx context.Context, subject Subject, resou
 	if !validOperations(resource.OwnerOperations) {
 		return Access{}, fmt.Errorf("%w: invalid owner operations", ErrInvalidPermission)
 	}
+	if !validOperations(resource.TenantOperations) || !validOperations(resource.CreatorOperations) {
+		return Access{}, fmt.Errorf("%w: invalid delegated operations", ErrInvalidPermission)
+	}
 	switch resource.Visibility {
 	case VisibilityPrivate, VisibilityTenant, VisibilityShared:
 	default:
@@ -326,7 +329,14 @@ func (e *evaluation) resolveResource(ctx context.Context, subject Subject, resou
 			}
 			return Access{}, err
 		}
-		return resourceAccess(resource, AccessSourceTenant), nil
+		if subject.UserID == resource.CreatedBy && resource.CreatorOperations != nil {
+			return resourceAccessWithOperations(resource, AccessSourceCreator, resource.CreatorOperations), nil
+		}
+		operations := resource.TenantOperations
+		if operations == nil {
+			operations = resource.OwnerOperations
+		}
+		return resourceAccessWithOperations(resource, AccessSourceTenant, operations), nil
 	case VisibilityShared:
 		if contains(resource.SharedWithUserIDs, subject.UserID) {
 			return resourceAccess(resource, AccessSourceShared), nil
@@ -484,11 +494,15 @@ func validOperations(operations []Operation) bool {
 }
 
 func resourceAccess(resource Resource, source AccessSource) Access {
+	return resourceAccessWithOperations(resource, source, resource.OwnerOperations)
+}
+
+func resourceAccessWithOperations(resource Resource, source AccessSource, operations []Operation) Access {
 	return Access{
 		Resource:   resource.Ref,
 		TenantID:   resource.TenantID,
 		Source:     source,
-		Operations: append([]Operation(nil), resource.OwnerOperations...),
+		Operations: append([]Operation(nil), operations...),
 	}
 }
 

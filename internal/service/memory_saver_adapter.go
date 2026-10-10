@@ -37,9 +37,8 @@ func NewMemorySaverAdapter(svc *MemoryService) component.MemorySaver {
 	return &memorySaverAdapter{svc: svc}
 }
 
-// Save implements component.MemorySaver. Agent message components already run
-// inside an authorized canvas, so this path queues the selected memories
-// directly instead of applying REST request access filtering.
+// Save implements component.MemorySaver. It checks the runtime user against
+// each configured memory before queueing the message.
 func (a *memorySaverAdapter) Save(ctx context.Context, req component.MemorySaveRequest) error {
 	if a == nil || a.svc == nil {
 		return fmt.Errorf("memory: saver adapter not initialised")
@@ -51,7 +50,7 @@ func (a *memorySaverAdapter) Save(ctx context.Context, req component.MemorySaveR
 		UserInput:     req.UserInput,
 		AgentResponse: req.AgentResponse,
 	}
-	ok, detail, err := a.svc.saveAgentMessage(ctx, req.MemoryIDs, msg)
+	ok, detail, err := a.svc.saveAgentMessage(ctx, req.UserID, req.MemoryIDs, msg)
 	if err != nil {
 		return err
 	}

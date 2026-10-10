@@ -49,7 +49,7 @@ func NewSkillSpaceService(dr file.DocRemover) *SkillSpaceService {
 	return &SkillSpaceService{
 		spaceDAO:          dao.NewSkillSpaceDAO(),
 		fileDAO:           dao.NewFileDAO(),
-		fileService:       file.NewFileService(CheckFileTeamPermission, dr),
+		fileService:       file.NewFileService(dr),
 		configDAO:         dao.NewSkillSearchConfigDAO(),
 		tenantDAO:         dao.NewTenantDAO(),
 		skillsFolderCache: make(map[string]string),
@@ -479,13 +479,13 @@ func (s *SkillSpaceService) asyncDeleteSpace(ctx context.Context, spaceID, folde
 	common.Info("Async deleting space folder via Go FileService", zap.String("folderID", folderID), zap.String("spaceID", spaceID))
 	ctxFS, cancelFS := context.WithTimeout(ctx, 60*time.Second)
 	defer cancelFS()
-	success, msg := s.fileService.DeleteFiles(ctxFS, tenantID, []string{folderID})
-	if !success {
-		common.Error(fmt.Sprintf("Failed to delete space folder via Go FileService during async delete, spaceID=%s, msg=%s", spaceID, msg), nil)
+	err := s.fileService.DeleteFiles(ctxFS, tenantID, []string{folderID})
+	if err != nil {
+		common.Error(fmt.Sprintf("Failed to delete space folder via Go FileService during async delete, spaceID=%s, error=%v", spaceID, err), nil)
 		// Retry once with a delay (same ctxFS, still valid)
 		time.Sleep(5 * time.Second)
-		if retrySuccess, retryMsg := s.fileService.DeleteFiles(ctxFS, tenantID, []string{folderID}); !retrySuccess {
-			common.Error(fmt.Sprintf("Retry failed to delete space folder, marking space as deleted anyway, spaceID=%s, msg=%s", spaceID, retryMsg), nil)
+		if retryErr := s.fileService.DeleteFiles(ctxFS, tenantID, []string{folderID}); retryErr != nil {
+			common.Error(fmt.Sprintf("Retry failed to delete space folder, marking space as deleted anyway, spaceID=%s, error=%v", spaceID, retryErr), nil)
 			// Mark as deleted even if folder deletion fails - orphaned folders can be cleaned up later
 		} else {
 			common.Info("Successfully deleted space folder on retry via Go FileService", zap.String("folderID", folderID))

@@ -224,6 +224,9 @@ func (h *MemoryHandler) UpdateMemory(c *gin.Context) {
 	// Call service layer to update memory
 	result, err := h.memoryService.UpdateMemory(ctx, userID, memoryID, &req)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		errMsg := err.Error()
 		// Check if it's a "not found" error
 		if strings.Contains(errMsg, "not found") {
@@ -276,6 +279,9 @@ func (h *MemoryHandler) DeleteMemory(c *gin.Context) {
 	// Call service layer to delete memory (with access control)
 	err := h.memoryService.DeleteMemory(ctx, user.ID, memoryID)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		errMsg := err.Error()
 		// Check if it's a "not found" error
 		if strings.Contains(errMsg, "not found") {
@@ -413,6 +419,9 @@ func (h *MemoryHandler) GetMemoryConfig(c *gin.Context) {
 	// Call service layer to get memory configuration (with access control)
 	result, err := h.memoryService.GetMemoryConfig(ctx, user.ID, memoryID)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		errMsg := err.Error()
 		// Check if it's a "not found" error
 		if strings.Contains(errMsg, "not found") {
@@ -487,6 +496,9 @@ func (h *MemoryHandler) GetMemoryMessages(c *gin.Context) {
 
 	data, err := h.memoryService.GetMemoryMessages(c.Request.Context(), userID, memoryID, agentIDs, keywords, page, pageSize)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		if isMemoryServiceNotFound(err) {
 			common.ResponseWithCodeData(c, common.CodeNotFound, nil, err.Error())
 			return
@@ -617,6 +629,9 @@ func (h *MemoryHandler) ForgetMessage(c *gin.Context) {
 	}
 
 	if err = h.memoryService.ForgetMessage(c.Request.Context(), user.ID, memoryID, messageID); err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		errMsg := err.Error()
 		if isMemoryServiceNotFound(err) {
 			common.ResponseWithCodeData(c, common.CodeNotFound, nil, errMsg)
@@ -705,6 +720,9 @@ func (h *MemoryHandler) UpdateMessage(c *gin.Context) {
 
 	ok, err = h.memoryService.UpdateMessageStatus(c.Request.Context(), userID, memoryID, messageID, status)
 	if err != nil || !ok {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		if isMemoryServiceNotFound(err) {
 			common.ResponseWithCodeData(c, common.CodeNotFound, nil, err.Error())
 			return
@@ -749,6 +767,9 @@ func (h *MemoryHandler) GetMessageContent(c *gin.Context) {
 
 	data, err := h.memoryService.GetMessageContent(c.Request.Context(), userID, memoryID, messageID)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		if _, ok := err.(*service.ResourceNotFoundError); ok {
 			common.ResponseWithCodeData(c, common.CodeNotFound, nil, err.Error())
 			return

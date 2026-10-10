@@ -227,10 +227,14 @@ func (s *ChunkService) RetrievalTest(ctx context.Context, req *service.Retrieval
 
 	if req.SearchID != nil && *req.SearchID != "" {
 		// If search_id is set, get meta_data_filter and chat_id from search_config
-		searchDetail, err := s.searchService.GetDetail(ctx, *req.SearchID)
+		if s.searchService == nil {
+			return nil, fmt.Errorf("search service not configured")
+		}
+		searchDetail, err := s.searchService.GetDetail(ctx, userID, *req.SearchID)
 		if err != nil {
-			common.Warn("Failed to get search detail for search_id, proceeding without it", zap.String("searchID", *req.SearchID), zap.Error(err))
-		} else if searchConfig, ok := searchConfigMap(searchDetail["search_config"]); ok && searchConfig != nil {
+			return nil, fmt.Errorf("failed to get search app %s: %w", *req.SearchID, err)
+		}
+		if searchConfig, ok := searchConfigMap(searchDetail["search_config"]); ok && searchConfig != nil {
 			if req.RerankCandidatesCount == nil || *req.RerankCandidatesCount == 0 {
 				rerankCandidatesCount = 100
 				if configuredRerankCandidatesCount, ok := common.GetInt(searchConfig["rerank_candidates_count"]); ok {

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"ragflow/internal/dao"
-	"ragflow/internal/entity"
 	"ragflow/internal/storage"
 	"ragflow/internal/utility"
 )
@@ -32,17 +31,11 @@ type fakeStorage struct {
 // sptr returns a pointer to the given string.
 func sptr(s string) *string { return &s }
 
-// testFilePerm controls the permission check returned by testFileService.
-// Tests that need to simulate denied access can set it to a function that
-// returns false.
-var testFilePerm CheckFilePermFunc = func(_ context.Context, _ *dao.FileDAO, _ *entity.File, _ string) bool { return true }
-
 func testFileService() *FileService {
 	return &FileService{
 		fileDAO:          dao.NewFileDAO(),
 		file2DocumentDAO: dao.NewFile2DocumentDAO(),
 		documentService:  nil,
-		checkFilePerm:    testFilePerm,
 	}
 }
 

@@ -43,9 +43,22 @@ type Subject struct {
 type ResourceKind string
 
 const (
-	ResourceKindDataset      ResourceKind = "dataset"
-	ResourceKindCanvas       ResourceKind = "canvas"
-	ResourceKindAgentSession ResourceKind = "agent_session"
+	ResourceKindDataset       ResourceKind = "dataset"
+	ResourceKindCanvas        ResourceKind = "canvas"
+	ResourceKindAgentSession  ResourceKind = "agent_session"
+	ResourceKindMemory        ResourceKind = "memory"
+	ResourceKindFile          ResourceKind = "file"
+	ResourceKindFolder        ResourceKind = "folder"
+	ResourceKindSearchApp     ResourceKind = "search_app"
+	ResourceKindChat          ResourceKind = "chat"
+	ResourceKindChatSession   ResourceKind = "chat_session"
+	ResourceKindConnector     ResourceKind = "connector"
+	ResourceKindSyncTask      ResourceKind = "sync_task"
+	ResourceKindModelProvider ResourceKind = "model_provider"
+	ResourceKindModelInstance ResourceKind = "model_instance"
+	ResourceKindModel         ResourceKind = "model"
+	ResourceKindMCPServer     ResourceKind = "mcp_server"
+	ResourceKindSkillSpace    ResourceKind = "skill_space"
 )
 
 // ResourceRef identifies a persisted resource.
@@ -123,13 +136,17 @@ const (
 // independent facts: the resource tenant, creator, and permission owner need
 // not be the same identity.
 type Resource struct {
-	Ref                 ResourceRef
-	TenantID            string
-	CreatedBy           string
-	OwnerUserID         string
-	Visibility          Visibility
-	TenantRequirement   TenantRequirement
-	OwnerOperations     []Operation
+	Ref               ResourceRef
+	TenantID          string
+	CreatedBy         string
+	OwnerUserID       string
+	Visibility        Visibility
+	TenantRequirement TenantRequirement
+	OwnerOperations   []Operation
+	// TenantOperations overrides OwnerOperations for tenant members when set.
+	TenantOperations []Operation
+	// CreatorOperations grants extra operations to CreatedBy after tenant access is verified.
+	CreatorOperations   []Operation
 	SharedWithUserIDs   []string
 	SharedWithTenantIDs []string
 	Active              bool
@@ -139,9 +156,10 @@ type Resource struct {
 type AccessSource string
 
 const (
-	AccessSourceOwner  AccessSource = "owner"
-	AccessSourceTenant AccessSource = "tenant"
-	AccessSourceShared AccessSource = "shared"
+	AccessSourceOwner   AccessSource = "owner"
+	AccessSourceTenant  AccessSource = "tenant"
+	AccessSourceCreator AccessSource = "creator"
+	AccessSourceShared  AccessSource = "shared"
 )
 
 // Access describes the operations a subject can perform on a resource.
@@ -190,7 +208,7 @@ type ScopeQuery struct {
 
 // Source loads normalized permission facts. GetResources must return the
 // requested resources with their tenant, creator, permission owner, active
-// state, visibility, owner operations, and share recipients. ListResourceRefs
+// state, visibility, operation sets, and share recipients. ListResourceRefs
 // returns all candidate IDs within the query boundary, including candidates
 // that policy will reject; Checker authorizes them before returning a scope.
 type Source interface {

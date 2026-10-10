@@ -82,6 +82,9 @@ func (h *ChatChannelHandler) CreateChatChannel(c *gin.Context) {
 		req.ChatID,
 	)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		common.ResponseWithCodeData(c, common.CodeServerError, nil, err.Error())
 		return
 	}
@@ -164,6 +167,9 @@ func (h *ChatChannelHandler) UpdateChatChannel(c *gin.Context) {
 	ctx := c.Request.Context()
 	result, code, err := h.chatChannelService.UpdateChatChannel(ctx, userID, channelID, unwrapChatChannelPayload(request))
 	if code != common.CodeSuccess || err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		writeChatChannelError(c, code, chatChannelErrMsg(code, err))
 		return
 	}

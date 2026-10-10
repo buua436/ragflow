@@ -26,6 +26,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 )
 
 type ChatChannelService struct {
@@ -100,22 +101,15 @@ func (s *ChatChannelService) List(ctx context.Context, tenantID string) ([]*enti
 	return s.chatChannelDAO.ListByTenantID(ctx, dao.DB, tenantID)
 }
 
-func (s *ChatChannelService) CreateChatChannel(ctx context.Context, tenantID, name, channelType string, config entity.JSONMap, chatID *string) (*entity.ChatChannel, error) {
+func (s *ChatChannelService) CreateChatChannel(ctx context.Context, userID, name, channelType string, config entity.JSONMap, chatID *string) (*entity.ChatChannel, error) {
 	if chatID != nil && *chatID != "" {
-		dialog, err := s.chatDAO.GetByID(ctx, dao.DB, *chatID)
-		if err != nil {
-			if dao.IsNotFoundErr(err) {
-				return nil, errors.New("can't find this chat assistant")
-			}
+		if err := checkChatPermission(ctx, nil, userID, *chatID, permission.OperationUse); err != nil {
 			return nil, err
-		}
-		if dialog.TenantID != tenantID {
-			return nil, errors.New("no authorization")
 		}
 	}
 	row := &entity.ChatChannel{
 		ID:       common.GenerateUUID(),
-		TenantID: tenantID,
+		TenantID: userID,
 		Name:     name,
 		Channel:  channelType,
 		Config:   config,
@@ -222,15 +216,15 @@ func (s *ChatChannelService) UpdateChatChannel(ctx context.Context, userID, chan
 				return nil, common.CodeDataError, errors.New("chat_id must be string or null")
 			}
 			if chatID != "" {
-				dialog, err := s.chatDAO.GetByID(ctx, dao.DB, chatID)
-				if err != nil {
-					if dao.IsNotFoundErr(err) {
-						return nil, common.CodeDataError, errors.New("can't find this chat assistant")
-					}
-					return nil, common.CodeServerError, err
+				if err := checkChatPermission(ctx, nil, userID, chatID, permission.OperationUse); err != nil {
+					code, normalizedErr := normalizeChatPermissionError(err)
+					return nil, code, normalizedErr
 				}
-				if dialog.TenantID != channel.TenantID {
-					return nil, common.CodeAuthenticationError, errors.New("no authorization")
+				if channel.TenantID != userID {
+					if err := checkChatPermission(ctx, nil, channel.TenantID, chatID, permission.OperationUse); err != nil {
+						code, normalizedErr := normalizeChatPermissionError(err)
+						return nil, code, normalizedErr
+					}
 				}
 			}
 			updates["chat_id"] = chatID
