@@ -84,3 +84,20 @@ func TestMemorySaverAuthorizesWithAuthenticatedCanvasCaller(t *testing.T) {
 		t.Fatalf("Save error = %v, want permission denied for authenticated caller", err)
 	}
 }
+
+func TestMemorySaverRejectsRuntimeIdentityMismatch(t *testing.T) {
+	setupMemoryMessageTestDB(t)
+	state := runtime.NewCanvasState("run-1", "session-1")
+	state.Sys["canvas_id"] = "canvas-1"
+	state.Sys["user_id"] = "runtime-user"
+	ctx := permission.WithIdentity(runtime.WithState(t.Context(), state), "authenticated-user", "tenant-1")
+
+	err := NewMemorySaverAdapter(NewMemoryService(dao.DB, engine.Get())).Save(ctx, component.MemorySaveRequest{
+		MemoryIDs: []string{"memory-1"},
+		UserID:    "runtime-user",
+		AgentID:   "canvas-1",
+	})
+	if !errors.Is(err, permission.ErrIdentityMismatch) {
+		t.Fatalf("Save error = %v, want identity mismatch", err)
+	}
+}

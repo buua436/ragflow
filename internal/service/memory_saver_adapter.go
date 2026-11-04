@@ -71,6 +71,8 @@ func (a *memorySaverAdapter) Save(ctx context.Context, req component.MemorySaveR
 				tenantID = stateTenantID
 			}
 			ctx = permission.WithIdentity(ctx, stateUserID, tenantID)
+		} else if stateUserID != "" && stateUserID != contextUserID {
+			return permission.ErrIdentityMismatch
 		}
 		checker := permission.NewDatabaseChecker(a.svc.db)
 		entry := permission.ResourceRef{Kind: permission.ResourceKindCanvas, ID: canvasID}
