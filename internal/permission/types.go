@@ -25,13 +25,14 @@ type userIDContextKey struct{}
 type tenantIDContextKey struct{}
 
 var (
-	ErrUnauthenticated    = errors.New("permission: user is required")
-	ErrIdentityMismatch   = errors.New("permission: identity does not match request context")
-	ErrResourceNotFound   = errors.New("permission: resource not found")
-	ErrMembershipNotFound = errors.New("permission: active tenant membership not found")
-	ErrPermissionDenied   = errors.New("permission: access denied")
-	ErrInvalidPermission  = errors.New("permission: invalid permission request")
-	ErrSourceUnavailable  = errors.New("permission: source is not configured")
+	ErrUnauthenticated      = errors.New("permission: user is required")
+	ErrIdentityMismatch     = errors.New("permission: identity does not match request context")
+	ErrResourceNotFound     = errors.New("permission: resource not found")
+	ErrMembershipNotFound   = errors.New("permission: active tenant membership not found")
+	ErrTenantContextMissing = errors.New("permission: tenant context is required")
+	ErrPermissionDenied     = errors.New("permission: access denied")
+	ErrInvalidPermission    = errors.New("permission: invalid permission request")
+	ErrSourceUnavailable    = errors.New("permission: source is not configured")
 )
 
 // WithIdentity attaches the authenticated user and active Tenant to a request
@@ -41,12 +42,9 @@ func WithIdentity(ctx context.Context, userID, tenantID string) context.Context 
 	return context.WithValue(ctx, tenantIDContextKey{}, tenantID)
 }
 
-// WithTenantID sets the operation Tenant when ctx has no active Tenant. It
-// preserves an authenticated Tenant so resource scope cannot switch tenants.
+// WithTenantID explicitly selects the tenant for an operation while preserving
+// the authenticated user. It does not validate membership or infer a default.
 func WithTenantID(ctx context.Context, tenantID string) context.Context {
-	if TenantIDFromContext(ctx) != "" {
-		return ctx
-	}
 	return context.WithValue(ctx, tenantIDContextKey{}, tenantID)
 }
 
@@ -59,7 +57,7 @@ func UserIDFromContext(ctx context.Context) string {
 	return userID
 }
 
-// TenantIDFromContext returns the active Tenant or operation scope attached to ctx.
+// TenantIDFromContext returns the selected tenant attached to ctx.
 func TenantIDFromContext(ctx context.Context) string {
 	if ctx == nil {
 		return ""

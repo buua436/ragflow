@@ -20,6 +20,7 @@ func TestNormalize(t *testing.T) {
 		{name: "missing resource", err: permission.ErrResourceNotFound, code: common.CodeNotFound, message: "Resource not found"},
 		{name: "denied", err: permission.ErrPermissionDenied, code: common.CodeForbidden, message: "Permission denied"},
 		{name: "missing membership", err: permission.ErrMembershipNotFound, code: common.CodeForbidden, message: "Permission denied"},
+		{name: "missing tenant context", err: permission.ErrTenantContextMissing, code: common.CodeForbidden, message: "Permission denied"},
 		{name: "internal permission failure", err: errors.New("database credentials must not leak"), code: common.CodeServerError, message: "Permission check failed"},
 	}
 

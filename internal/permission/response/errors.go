@@ -39,6 +39,7 @@ func IsPermissionError(err error) bool {
 	return errors.Is(err, permission.ErrUnauthenticated) ||
 		errors.Is(err, permission.ErrResourceNotFound) ||
 		errors.Is(err, permission.ErrMembershipNotFound) ||
+		errors.Is(err, permission.ErrTenantContextMissing) ||
 		errors.Is(err, permission.ErrPermissionDenied)
 }
 
@@ -56,7 +57,7 @@ func normalize(err error, hideResource bool) (common.ErrorCode, error) {
 	case errors.Is(err, permission.ErrResourceNotFound):
 		code = common.CodeNotFound
 		message = "Resource not found"
-	case errors.Is(err, permission.ErrPermissionDenied), errors.Is(err, permission.ErrMembershipNotFound):
+	case errors.Is(err, permission.ErrPermissionDenied), errors.Is(err, permission.ErrMembershipNotFound), errors.Is(err, permission.ErrTenantContextMissing):
 		code = common.CodeForbidden
 		message = "Permission denied"
 	}

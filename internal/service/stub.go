@@ -72,14 +72,12 @@ func resolveCurrentUserTenantEE(context.Context, string) (*entity.UserTenant, bo
 	return nil, false, nil
 }
 
-// resolveDefaultTenantIDEE leaves tenant resolution to the community path.
-func resolveDefaultTenantIDEE(context.Context) (string, bool, error) {
-	return "", false, nil
-}
-
-// resolveUserAuthTenant discards tenant context because community credentials identify only a user.
-func resolveUserAuthTenant(_ context.Context, _ *entity.User, _ string) (string, error) {
-	return "", nil
+// resolveUserAuthTenant selects the user's personal tenant for community auth.
+func resolveUserAuthTenant(_ context.Context, user *entity.User, _ string) (string, error) {
+	if user == nil || user.ID == "" {
+		return "", permission.ErrUnauthenticated
+	}
+	return user.ID, nil
 }
 
 // LoginChannel is one authentication channel advertised to the login page.

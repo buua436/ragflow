@@ -26,6 +26,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/engine"
 	"ragflow/internal/engine/kvrocks"
+	"ragflow/internal/permission"
 	"ragflow/internal/server"
 	"ragflow/internal/service"
 	"ragflow/internal/storage"
@@ -913,6 +914,7 @@ func (h *Handler) AuthMiddleware() gin.HandlerFunc {
 		c.Set("user_id", user.ID)
 		c.Set("tenant_id", identity.TenantID)
 		c.Set("email", user.Email)
+		c.Request = c.Request.WithContext(permission.WithIdentity(c.Request.Context(), user.ID, identity.TenantID))
 		c.Next()
 	}
 }
