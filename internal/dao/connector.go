@@ -225,18 +225,24 @@ func (dao *ConnectorDAO) DeleteByID(ctx context.Context, db *gorm.DB, id string)
 }
 
 // CancelRunningOrScheduledLogs marks active sync logs as canceled for a connector.
-func (dao *ConnectorDAO) CancelRunningOrScheduledLogs(ctx context.Context, db *gorm.DB, connectorID string) error {
+func (dao *ConnectorDAO) CancelRunningOrScheduledLogs(ctx context.Context, db *gorm.DB, connectorID string, connectorScope func(*gorm.DB) *gorm.DB) error {
+	connectorQuery := db.WithContext(ctx).Model(&entity.Connector{}).
+		Select("connector.id").Where("connector.id = ?", connectorID)
+	connectorQuery = connectorScope(connectorQuery)
 	return db.WithContext(ctx).Model(&entity.SyncLogs{}).
 		Where("connector_id = ? AND status IN ?", connectorID, []string{string(entity.TaskStatusSchedule), string(entity.TaskStatusRunning)}).
+		Where("EXISTS (?)", connectorQuery).
 		Update("status", string(entity.TaskStatusCancel)).Error
 }
 
 // ScheduleConnectorTasks schedules sync and optional prune tasks for a connector.
-func (dao *ConnectorDAO) ScheduleConnectorTasks(ctx context.Context, db *gorm.DB, connectorID string) ([]string, error) {
+func (dao *ConnectorDAO) ScheduleConnectorTasks(ctx context.Context, db *gorm.DB, connectorID string, connectorScope func(*gorm.DB) *gorm.DB) ([]string, error) {
 	taskIDs := []string{}
 	err := db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var connector entity.Connector
-		if err := tx.WithContext(ctx).Where("id = ?", connectorID).First(&connector).Error; err != nil {
+		connectorQuery := tx.WithContext(ctx).Model(&entity.Connector{}).Where("connector.id = ?", connectorID)
+		connectorQuery = connectorScope(connectorQuery)
+		if err := connectorQuery.First(&connector).Error; err != nil {
 			return err
 		}
 
@@ -264,9 +270,9 @@ func (dao *ConnectorDAO) ScheduleConnectorTasks(ctx context.Context, db *gorm.DB
 			}
 		}
 
-		return tx.WithContext(ctx).Model(&entity.Connector{}).
-			Where("id = ?", connectorID).
-			Update("status", string(entity.TaskStatusSchedule)).Error
+		connectorUpdate := tx.WithContext(ctx).Model(&entity.Connector{}).Where("id = ?", connectorID)
+		connectorUpdate = connectorScope(connectorUpdate)
+		return connectorUpdate.Update("status", string(entity.TaskStatusSchedule)).Error
 	})
 	return taskIDs, err
 }

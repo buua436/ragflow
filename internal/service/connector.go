@@ -272,11 +272,11 @@ type boxOAuthTokenResponse struct {
 }
 
 // cancelConnectorTasks Stop connector tasks
-func (s *ConnectorService) cancelConnectorTasks(ctx context.Context, connectorID string) error {
-	if err := s.connectorDAO.CancelRunningOrScheduledLogs(ctx, dao.DB, connectorID); err != nil {
+func (s *ConnectorService) cancelConnectorTasks(ctx context.Context, connectorID string, connectorScope func(*gorm.DB) *gorm.DB) error {
+	if err := s.connectorDAO.CancelRunningOrScheduledLogs(ctx, dao.DB, connectorID, connectorScope); err != nil {
 		return err
 	}
-	return s.connectorDAO.UpdateByID(ctx, dao.DB, connectorID, map[string]interface{}{"status": string(entity.TaskStatusCancel)})
+	return s.connectorDAO.UpdateByID(ctx, connectorScope(dao.DB), connectorID, map[string]interface{}{"status": string(entity.TaskStatusCancel)})
 }
 
 // CreateConnector creates a connector owned by the current user.
@@ -385,7 +385,16 @@ func (s *ConnectorService) ListConnectors(ctx context.Context, requestedTenantID
 	} else if err := permission.NewDatabaseChecker(dao.DB).CheckTenant(ctx, tenantID, permission.TenantMember); err != nil {
 		return nil, err
 	}
-	connectors, err := s.connectorDAO.ListByTenantID(ctx, dao.DB, tenantID)
+	checker := permission.NewDatabaseChecker(dao.DB)
+	visibilityScope, err := checker.QueryScope(ctx, permission.ScopeQuery{
+		TenantID:  tenantID,
+		Kind:      permission.ResourceKindConnector,
+		Operation: permission.OperationRead,
+	})
+	if err != nil {
+		return nil, err
+	}
+	connectors, err := s.connectorDAO.ListByTenantID(ctx, visibilityScope.Apply(dao.DB.Model(&entity.Connector{})), tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -967,24 +976,31 @@ func (s *ConnectorService) DeleteConnector(ctx context.Context, connectorID stri
 	if connectorID == "" {
 		return false, common.CodeDataError, fmt.Errorf("connector_id is required")
 	}
-	if err := permission.NewDatabaseChecker(dao.DB).CheckResource(ctx, permission.ResourceRef{Kind: permission.ResourceKindConnector, ID: connectorID}, permission.OperationDelete); err != nil {
+	checker := permission.NewDatabaseChecker(dao.DB)
+	deleteScope, err := checker.QueryScope(ctx, permission.ScopeQuery{
+		Kind:      permission.ResourceKindConnector,
+		Operation: permission.OperationDelete,
+	})
+	if err != nil {
 		code, permissionErr := permissionresponse.NormalizeHidden(err)
 		return false, code, permissionErr
 	}
+	applyDeleteScope := func(db *gorm.DB) *gorm.DB { return deleteScope.Apply(db) }
 
-	connector, err := s.connectorDAO.GetByID(ctx, dao.DB, connectorID)
+	connector, err := s.connectorDAO.GetByID(ctx, deleteScope.Apply(dao.DB.Model(&entity.Connector{})), connectorID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, common.CodeDataError, fmt.Errorf("can't find this Connector")
+			code, hiddenErr := permissionresponse.NormalizeHidden(permission.ErrResourceNotFound)
+			return false, code, hiddenErr
 		}
 		return false, common.CodeServerError, err
 	}
 
-	if err = s.cancelConnectorTasks(ctx, connector.ID); err != nil {
+	if err = s.cancelConnectorTasks(ctx, connector.ID, applyDeleteScope); err != nil {
 		return false, common.CodeServerError, err
 	}
 
-	if err = s.connectorDAO.DeleteByID(ctx, dao.DB, connector.ID); err != nil {
+	if err = s.connectorDAO.DeleteByID(ctx, applyDeleteScope(dao.DB), connector.ID); err != nil {
 		return false, common.CodeServerError, err
 	}
 	return true, common.CodeSuccess, nil
@@ -1003,21 +1019,40 @@ func (s *ConnectorService) UpdateConnector(ctx context.Context, connectorID stri
 	if connectorID == "" {
 		return nil, common.CodeDataError, fmt.Errorf("connector_id is required")
 	}
-	if err := permission.NewDatabaseChecker(dao.DB).CheckResource(ctx, permission.ResourceRef{Kind: permission.ResourceKindConnector, ID: connectorID}, permission.OperationUpdate); err != nil {
+	checker := permission.NewDatabaseChecker(dao.DB)
+	updateScope, err := checker.QueryScope(ctx, permission.ScopeQuery{
+		Kind:      permission.ResourceKindConnector,
+		Operation: permission.OperationUpdate,
+	})
+	if err != nil {
 		code, permissionErr := permissionresponse.NormalizeHidden(err)
 		return nil, code, permissionErr
 	}
-	if req != nil && (req.Reschedule || isConnectorCancelStatus(req.Status) || isConnectorScheduleStatus(req.Status)) {
-		if err := permission.NewDatabaseChecker(dao.DB).CheckResource(ctx, permission.ResourceRef{Kind: permission.ResourceKindConnector, ID: connectorID}, permission.OperationRun); err != nil {
+	needsRun := req != nil && (req.Reschedule || isConnectorCancelStatus(req.Status) || isConnectorScheduleStatus(req.Status))
+	var runScope permission.QueryScope
+	if needsRun {
+		runScope, err = checker.QueryScope(ctx, permission.ScopeQuery{
+			Kind:      permission.ResourceKindConnector,
+			Operation: permission.OperationRun,
+		})
+		if err != nil {
 			code, permissionErr := permissionresponse.NormalizeHidden(err)
 			return nil, code, permissionErr
 		}
 	}
+	applyWriteScope := func(db *gorm.DB) *gorm.DB {
+		db = updateScope.Apply(db)
+		if needsRun {
+			db = runScope.Apply(db)
+		}
+		return db
+	}
 
-	connector, err := s.connectorDAO.GetByID(ctx, dao.DB, connectorID)
+	connector, err := s.connectorDAO.GetByID(ctx, applyWriteScope(dao.DB.Model(&entity.Connector{})), connectorID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, common.CodeDataError, fmt.Errorf("can't find this Connector")
+			code, hiddenErr := permissionresponse.NormalizeHidden(permission.ErrResourceNotFound)
+			return nil, code, hiddenErr
 		}
 		return nil, common.CodeServerError, err
 	}
@@ -1045,27 +1080,27 @@ func (s *ConnectorService) UpdateConnector(ctx context.Context, connectorID stri
 	}
 
 	if len(updates) > 0 {
-		if err = s.connectorDAO.UpdateByID(ctx, dao.DB, connectorID, updates); err != nil {
+		if err = s.connectorDAO.UpdateByID(ctx, applyWriteScope(dao.DB), connectorID, updates); err != nil {
 			return nil, common.CodeServerError, err
 		}
 	}
 
 	if req != nil {
 		if req.Reschedule {
-			if err = s.cancelConnectorTasks(ctx, connectorID); err != nil {
+			if err = s.cancelConnectorTasks(ctx, connectorID, applyWriteScope); err != nil {
 				return nil, common.CodeServerError, err
 			}
-			taskIDs, err := s.connectorDAO.ScheduleConnectorTasks(ctx, dao.DB, connectorID)
+			taskIDs, err := s.connectorDAO.ScheduleConnectorTasks(ctx, dao.DB, connectorID, applyWriteScope)
 			if err != nil {
 				return nil, common.CodeServerError, err
 			}
 			publishSyncerTasks(taskIDs)
 		} else if isConnectorCancelStatus(req.Status) {
-			if err = s.cancelConnectorTasks(ctx, connectorID); err != nil {
+			if err = s.cancelConnectorTasks(ctx, connectorID, applyWriteScope); err != nil {
 				return nil, common.CodeServerError, err
 			}
 		} else if isConnectorScheduleStatus(req.Status) {
-			taskIDs, err := s.connectorDAO.ScheduleConnectorTasks(ctx, dao.DB, connectorID)
+			taskIDs, err := s.connectorDAO.ScheduleConnectorTasks(ctx, dao.DB, connectorID, applyWriteScope)
 			if err != nil {
 				return nil, common.CodeServerError, err
 			}
@@ -1073,10 +1108,11 @@ func (s *ConnectorService) UpdateConnector(ctx context.Context, connectorID stri
 		}
 	}
 
-	connector, err = s.connectorDAO.GetByID(ctx, dao.DB, connectorID)
+	connector, err = s.connectorDAO.GetByID(ctx, applyWriteScope(dao.DB.Model(&entity.Connector{})), connectorID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, common.CodeDataError, fmt.Errorf("can't find this Connector")
+			code, hiddenErr := permissionresponse.NormalizeHidden(permission.ErrResourceNotFound)
+			return nil, code, hiddenErr
 		}
 		return nil, common.CodeServerError, err
 	}

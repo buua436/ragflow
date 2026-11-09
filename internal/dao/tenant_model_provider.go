@@ -57,11 +57,11 @@ func (dao *TenantModelProviderDAO) GetByTenantIDAndUserIDAndProviderName(ctx con
 	return &provider, nil
 }
 
-// ListByTenantIDAndUserID returns one user's provider configurations in a tenant.
-func (dao *TenantModelProviderDAO) ListByTenantIDAndUserID(ctx context.Context, db *gorm.DB, tenantID, userID string) ([]*entity.TenantModelProvider, error) {
+// ListByTenantID returns provider configurations from a tenant.
+func (dao *TenantModelProviderDAO) ListByTenantID(ctx context.Context, db *gorm.DB, tenantID string) ([]*entity.TenantModelProvider, error) {
 	var providers []*entity.TenantModelProvider
 	err := db.WithContext(ctx).
-		Where("tenant_id = ? AND user_id = ?", tenantID, userID).
+		Where("tenant_id = ?", tenantID).
 		Find(&providers).Error
 	return providers, err
 }

@@ -151,7 +151,6 @@ func (m *ModelProviderService) AddModelProvider(ctx context.Context, providerNam
 }
 
 func (m *ModelProviderService) ListProvidersOfTenant(ctx context.Context) ([]map[string]interface{}, common.ErrorCode, error) {
-	userID := permission.UserIDFromContext(ctx)
 	ownedTenantID, err := requireCurrentTenantID(ctx)
 	if err != nil {
 		if errors.Is(err, permission.ErrMembershipNotFound) {
@@ -170,7 +169,7 @@ func (m *ModelProviderService) ListProvidersOfTenant(ctx context.Context) ([]map
 		return nil, code, normalizedErr
 	}
 	providerQuery := providerScope.Apply(dao.DB.WithContext(ctx).Model(&entity.TenantModelProvider{}))
-	providerRows, err := m.modelProviderDAO.ListByTenantIDAndUserID(ctx, providerQuery, ownedTenantID, userID)
+	providerRows, err := m.modelProviderDAO.ListByTenantID(ctx, providerQuery, ownedTenantID)
 	if err != nil {
 		return nil, common.CodeServerError, err
 	}
@@ -1847,8 +1846,7 @@ func (m *ModelProviderService) ShowTask(ctx context.Context, providerName, insta
 }
 
 // ListModelsForUserInTenant returns models available to the current user in the requested
-// tenant context, filtered by the user's resource permissions. Provider and
-// instance configuration comes from the tenant owner.
+// tenant context, filtered by the user's provider and model resource permissions.
 func (m *ModelProviderService) ListModelsForUserInTenant(ctx context.Context, requestedTenantID, modelTypeFilter string) ([]map[string]interface{}, common.ErrorCode, error) {
 	tenant, code, err := m.resolveModelListTenant(ctx, requestedTenantID)
 	if err != nil {
@@ -1882,10 +1880,6 @@ func (m *ModelProviderService) ListModelsForUserInTenant(ctx context.Context, re
 	}
 
 	checker := permission.NewDatabaseChecker(dao.DB)
-	tenantOwner, err := permission.TenantOwnerMembership(ctx, dao.DB, tenantID)
-	if err != nil {
-		return nil, common.CodeServerError, fmt.Errorf("get tenant owner for model listing: %w", err)
-	}
 	providerScope, err := checker.QueryScope(ctx, permission.ScopeQuery{
 		Kind:      permission.ResourceKindModelProvider,
 		Operation: permission.OperationRead,
@@ -1895,7 +1889,7 @@ func (m *ModelProviderService) ListModelsForUserInTenant(ctx context.Context, re
 		return nil, code, normalizedErr
 	}
 	providerQuery := providerScope.Apply(dao.DB.Model(&entity.TenantModelProvider{}))
-	providers, err := m.modelProviderDAO.ListByTenantIDAndUserID(ctx, providerQuery, tenantID, tenantOwner.UserID)
+	providers, err := m.modelProviderDAO.ListByTenantID(ctx, providerQuery, tenantID)
 	if err != nil {
 		return nil, common.CodeServerError, err
 	}
