@@ -34,8 +34,8 @@ func (c emptyChatSessionScopeChecker) CheckResource(context.Context, permission.
 	return c.checkErr
 }
 
-func (emptyChatSessionScopeChecker) Scope(context.Context, permission.ScopeQuery) (permission.Scope, error) {
-	return permission.Scope{Mode: permission.ScopeNone}, nil
+func (c emptyChatSessionScopeChecker) QueryScope(context.Context, permission.ScopeQuery) (permission.QueryScope, error) {
+	return permission.QueryScope{}, c.checkErr
 }
 
 func (c emptyChatSessionScopeChecker) FilterResources(context.Context, []permission.ResourceRef, permission.Operation) ([]permission.ResourceRef, error) {
@@ -196,6 +196,7 @@ func TestDeleteSessions_SuccessByIDs(t *testing.T) {
 }
 
 func TestDeleteSessions_DeleteAllAndInvalidID(t *testing.T) {
+	setupChatListTestDB(t)
 	store := newFakeSessionStore()
 	store.dialogExists["user-1|chat-1"] = true
 

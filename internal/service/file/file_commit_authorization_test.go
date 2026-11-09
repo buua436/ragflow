@@ -29,7 +29,7 @@ func newCommitAuthFixture(t *testing.T) *commitAuthFixture {
 	t.Helper()
 	f := &commitAuthFixture{db: newCommitAuthTestDB(t)}
 	mk := func(id, parentID, tenantID, name, fileType, location string, size int64) *entity.File {
-		row := &entity.File{
+		row := &entity.File{UserID: tenantID,
 			ID:        id,
 			ParentID:  parentID,
 			TenantID:  tenantID,

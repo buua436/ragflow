@@ -63,7 +63,9 @@ func newWebhookTraceTestHandler(t *testing.T) (*AgentHandler, *goredis.Client) {
 	if err := testsupport.PrepareEnterprisePermissionFixture(db, "u1", "u1"); err != nil {
 		t.Fatalf("prepare webhook trace permission fixture: %v", err)
 	}
-	if err := db.Create(&entity.UserCanvas{ID: "c1", UserID: "u1", Title: sptr("Test")}).Error; err != nil {
+	if err := db.Create(&entity.UserCanvas{ID: "c1", UserID: "u1", Title: sptr("Test"),
+		TenantID: sptr("u1"),
+	}).Error; err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
 
@@ -101,7 +103,7 @@ func requestWebhookTrace(t *testing.T, h *AgentHandler, canvasID, userID string,
 	if err := dao.DB.Where("id = ?", userID).FirstOrCreate(&user, entity.User{ID: userID}).Error; err != nil {
 		t.Fatalf("ensure webhook trace caller: %v", err)
 	}
-	if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, "u1", userID, "u1"); err != nil {
+	if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, "u1", "u1", userID); err != nil {
 		t.Fatalf("prepare webhook trace caller permission: %v", err)
 	}
 	c.Request = c.Request.WithContext(permission.WithIdentity(c.Request.Context(),

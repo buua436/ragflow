@@ -4,6 +4,7 @@ package api
 
 import (
 	"net/http"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -53,6 +54,29 @@ func TestDatasetListPaginationFilteringAndTotals(t *testing.T) {
 	}
 	restCode(t, restCall(t, TestConfig, http.MethodGet, "/datasets", nil, apiObject{"id": "00000000000040008000000000000000"}), 200, 404)
 	restCode(t, restCall(t, TestConfig, http.MethodGet, "/datasets", nil, apiObject{"id": ids[0], "ids": scoped}), 200, 102)
+}
+
+func TestDatasetListHidesOtherTenantResources(t *testing.T) {
+	otherAPIKey := strings.TrimSpace(os.Getenv("RAGFLOW_TEST_OTHER_API_KEY"))
+	if otherAPIKey == "" {
+		t.Skip("RAGFLOW_TEST_OTHER_API_KEY is required for a second tenant")
+	}
+
+	dataset := createRESTDataset(t, nil)
+	datasetID := dataset["id"].(string)
+	other := *TestConfig
+	other.APIKey = otherAPIKey
+	other.AuthToken = ""
+
+	restCode(t, restCall(t, &other, http.MethodGet, "/datasets", nil, apiObject{"id": datasetID}), http.StatusOK, 404)
+	restCode(t, restCall(t, &other, http.MethodGet, "/datasets/"+datasetID, nil, nil), http.StatusOK, 404)
+	listed := restOK(t, restCall(t, &other, http.MethodGet, "/datasets", nil, apiObject{"page": 1, "page_size": 100}))
+	for _, item := range array(t, listed["data"]) {
+		if object(t, item)["id"] == datasetID {
+			t.Fatalf("other tenant listed dataset %s", datasetID)
+		}
+	}
+	requireDatasetFields(t, datasetID, apiObject{"name": dataset["name"]})
 }
 
 func TestDatasetDeleteValidationAtomicityAndIsolation(t *testing.T) {

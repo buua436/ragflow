@@ -18,7 +18,6 @@ package dao
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	"ragflow/internal/entity"
@@ -89,54 +88,6 @@ func (dao *UserTenantDAO) FilterByUserIDAndTenantID(ctx context.Context, db *gor
 	return &userTenant, nil
 }
 
-// GetOwnerByUserID returns the user's owner membership, falling back to the
-// personal tenant row identified by user_id == tenant_id.
-func (dao *UserTenantDAO) GetOwnerByUserID(ctx context.Context, db *gorm.DB, userID string) (*entity.UserTenant, error) {
-	var membership entity.UserTenant
-	err := db.WithContext(ctx).
-		Where("user_id = ? AND role = ? AND status = ?", userID, "owner", entity.TenantMembershipStatusJoined).
-		Take(&membership).Error
-	if err == nil {
-		return &membership, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-	err = db.WithContext(ctx).
-		Where("user_id = ? AND tenant_id = ? AND status = ?", userID, userID, entity.TenantMembershipStatusJoined).
-		Take(&membership).Error
-	if err != nil {
-		return nil, err
-	}
-	return &membership, nil
-}
-
-// GetOwnerByTenantID returns the joined owner membership for tenantID, falling
-// back to the personal tenant row identified by user_id == tenant_id.
-func (dao *UserTenantDAO) GetOwnerByTenantID(ctx context.Context, db *gorm.DB, tenantID string) (*entity.UserTenant, error) {
-	var membership entity.UserTenant
-	err := db.WithContext(ctx).
-		Where("tenant_id = ? AND role = ? AND status = ?", tenantID, "owner", entity.TenantMembershipStatusJoined).
-		Take(&membership).Error
-	if err == nil {
-		return &membership, nil
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, err
-	}
-
-	err = db.WithContext(ctx).
-		Where("tenant_id = ? AND user_id = ? AND status = ?", tenantID, tenantID, entity.TenantMembershipStatusJoined).
-		Take(&membership).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return &entity.UserTenant{UserID: tenantID, TenantID: tenantID}, nil
-		}
-		return nil, err
-	}
-	return &membership, nil
-}
-
 // GetByUserIDAndRole get user tenant relationships by user ID and role
 func (dao *UserTenantDAO) GetByUserIDAndRole(ctx context.Context, db *gorm.DB, userID, role string) ([]*entity.UserTenant, error) {
 	var relations []*entity.UserTenant
@@ -205,7 +156,8 @@ func (dao *UserTenantDAO) GetTenantsByUserID(ctx context.Context, db *gorm.DB, u
 	var results []*TenantInfoByUserID
 	err := db.WithContext(ctx).Table("user_tenant").
 		Select("user_tenant.tenant_id, user_tenant.role, user_tenant.status, user.nickname, user.email, user.avatar, user.update_date").
-		Joins("JOIN user ON user_tenant.tenant_id = user.id").
+		Joins("LEFT JOIN user_tenant AS tenant_owner ON tenant_owner.tenant_id = user_tenant.tenant_id AND tenant_owner.role = ? AND tenant_owner.status = ?", "owner", entity.TenantMembershipStatusJoined).
+		Joins("LEFT JOIN user ON tenant_owner.user_id = user.id").
 		Where("user_tenant.user_id = ? AND user_tenant.status IN ?", userID, []string{
 			entity.TenantMembershipStatusJoined,
 			entity.TenantMembershipStatusInvited,

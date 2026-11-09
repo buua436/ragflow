@@ -68,7 +68,7 @@ func NewFileHandler(fileService *file.FileService, userService *service.UserServ
 // @Description Get list of files under a folder with filtering, pagination and sorting (matches Python /files endpoint)
 // @Tags file
 // @Param parent_id query string false "parent folder ID (empty means root folder)"
-// @Param tenant_id query string false "tenant whose files are listed (defaults to the current user)"
+// @Param tenant_id query string false "tenant whose files are listed (defaults to the current tenant)"
 // @Param keywords query string false "search keywords (case-insensitive)"
 // @Param page query int false "page number (default: 1, min: 1)"
 // @Param page_size query int false "items per page (default: 30, min: 1, max: 100)"
@@ -78,25 +78,30 @@ func NewFileHandler(fileService *file.FileService, userService *service.UserServ
 // @Success 200 {object} file.ListFilesResponse
 // @Router /api/v1/files [get]
 func (h *FileHandler) ListFiles(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		common.RespondError(c, errorCode, errorMessage)
 		return
 	}
-	userID := user.ID
-
-	parentID := c.Query("parent_id")
-	tenantID := c.Query("tenant_id")
-	if tenantID == "" {
-		tenantID = userID
-	}
-	keywords := c.Query("keywords")
+	ctx := c.Request.Context()
 
 	page, pageSize, err := common.ParsePagination(c.Request.URL.Query())
 	if err != nil {
 		common.RespondError(c, common.CodeParamError, err.Error())
 		return
 	}
+
+	parentID := c.Query("parent_id")
+	tenantID := c.Query("tenant_id")
+	if tenantID == "" {
+		tenantID = permission.TenantIDFromContext(ctx)
+	}
+	if tenantID == "" {
+		respondFileServiceError(c, permission.ErrTenantContextMissing)
+		return
+	}
+	ctx = permission.WithTenantID(ctx, tenantID)
+	keywords := c.Query("keywords")
 
 	orderBy := c.DefaultQuery("orderby", "create_time")
 	desc := true
@@ -105,7 +110,6 @@ func (h *FileHandler) ListFiles(c *gin.Context) {
 	}
 	terms := orderTermsFromQuery(c, orderBy, desc)
 
-	ctx := c.Request.Context()
 	result, err := h.fileService.ListFilesForTenant(ctx, tenantID, parentID, page, pageSize, terms, keywords)
 	if err != nil {
 		respondFileServiceError(c, err)

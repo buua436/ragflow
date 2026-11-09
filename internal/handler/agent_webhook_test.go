@@ -170,6 +170,7 @@ func makeWebhookCanvas(id, userID, mode string, params map[string]any) *entity.U
 		UserID:         userID,
 		CanvasCategory: "agent_canvas",
 		DSL:            entity.JSONMap(dsl),
+		TenantID:       sptr(userID),
 	}
 }
 

@@ -42,7 +42,7 @@ func createSearchServiceTestSearch(t *testing.T, id, tenantID, name string) {
 	t.Helper()
 
 	status := string(entity.StatusValid)
-	if err := dao.DB.Create(&entity.Search{
+	if err := dao.DB.Create(&entity.Search{UserID: tenantID,
 		ID:           id,
 		TenantID:     tenantID,
 		Name:         name,
@@ -174,16 +174,22 @@ func TestSearchServiceListSearchesReturnsOwnerDisplayFields(t *testing.T) {
 	setupSearchServiceTestDB(t)
 
 	if err := dao.DB.Create(&entity.User{
-		ID:       "user-1",
+		ID:       "search-owner",
 		Nickname: "search owner",
 		Status:   sptr("1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to create user: %v", err)
 	}
-	createSearchServiceTestSearch(t, "search-1", "user-1", "Search One")
+	status := string(entity.StatusValid)
+	if err := dao.DB.Create(&entity.Search{
+		UserID: "search-owner", ID: "search-1", TenantID: "tenant-uuid", CreatedBy: "search-owner",
+		Name: "Search One", SearchConfig: entity.JSONMap{}, Status: &status,
+	}).Error; err != nil {
+		t.Fatalf("failed to create search: %v", err)
+	}
 
-	ctx := serviceTestContext(t, "user-1", "user-1")
-	result, err := NewSearchService().ListSearches(ctx, "", 0, 0, []dao.OrderTerm{{Column: "create_time", Desc: true}}, nil)
+	ctx := serviceTestContext(t, "search-owner", "tenant-uuid")
+	result, err := NewSearchService().ListSearches(ctx, "", 0, 0, []dao.OrderTerm{{Column: "create_time", Desc: true}}, []string{"search-owner"})
 	if err != nil {
 		t.Fatalf("ListSearches failed: %v", err)
 	}
@@ -195,12 +201,18 @@ func TestSearchServiceListSearchesReturnsOwnerDisplayFields(t *testing.T) {
 	}
 }
 
-func TestSearchServiceListSearchesNicknameFallsBackToTenantID(t *testing.T) {
+func TestSearchServiceListSearchesNicknameFallsBackToOwnerUserID(t *testing.T) {
 	setupSearchServiceTestDB(t)
 
-	createSearchServiceTestSearch(t, "search-1", "user-1", "Search One")
+	status := string(entity.StatusValid)
+	if err := dao.DB.Create(&entity.Search{
+		UserID: "search-owner", ID: "search-1", TenantID: "tenant-uuid", CreatedBy: "search-owner",
+		Name: "Search One", SearchConfig: entity.JSONMap{}, Status: &status,
+	}).Error; err != nil {
+		t.Fatalf("failed to create search: %v", err)
+	}
 
-	ctx := serviceTestContext(t, "user-1", "user-1")
+	ctx := serviceTestContext(t, "search-owner", "tenant-uuid")
 	result, err := NewSearchService().ListSearches(ctx, "", 0, 0, []dao.OrderTerm{{Column: "create_time", Desc: true}}, nil)
 	if err != nil {
 		t.Fatalf("ListSearches failed: %v", err)
@@ -208,7 +220,7 @@ func TestSearchServiceListSearchesNicknameFallsBackToTenantID(t *testing.T) {
 	if result.Total != 1 || len(result.SearchApps) != 1 {
 		t.Fatalf("expected one search app, got total=%d len=%d", result.Total, len(result.SearchApps))
 	}
-	if got, want := result.SearchApps[0]["nickname"], "user-1"; got != want {
+	if got, want := result.SearchApps[0]["nickname"], "search-owner"; got != want {
 		t.Fatalf("nickname = %v, want %v", got, want)
 	}
 }
@@ -217,9 +229,9 @@ func TestSearchServiceListSearchesUsesPermissionScope(t *testing.T) {
 	setupSearchServiceTestDB(t)
 	valid := string(entity.StatusValid)
 	for _, row := range []entity.Search{
-		{ID: "team-search", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "Team Search", SearchConfig: entity.JSONMap{}, Status: &valid},
-		{ID: "member-search", TenantID: "team-tenant", CreatedBy: "member-1", Name: "Member Search", SearchConfig: entity.JSONMap{}, Status: &valid},
-		{ID: "unshared-search", TenantID: "other-tenant", CreatedBy: "other-owner", Name: "Unshared Search", SearchConfig: entity.JSONMap{}, Status: &valid},
+		{UserID: "team-owner", ID: "team-search", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "Team Search", SearchConfig: entity.JSONMap{}, Status: &valid},
+		{UserID: "member-1", ID: "member-search", TenantID: "team-tenant", CreatedBy: "member-1", Name: "Member Search", SearchConfig: entity.JSONMap{}, Status: &valid},
+		{UserID: "other-owner", ID: "unshared-search", TenantID: "other-tenant", CreatedBy: "other-owner", Name: "Unshared Search", SearchConfig: entity.JSONMap{}, Status: &valid},
 	} {
 		search := row
 		if err := dao.DB.Create(&search).Error; err != nil {
@@ -256,7 +268,7 @@ func TestSearchServiceListSearchesUsesPermissionScope(t *testing.T) {
 func TestSearchServiceSeparatesSearchReadFromRunPermission(t *testing.T) {
 	setupSearchServiceTestDB(t)
 	valid := string(entity.StatusValid)
-	search := entity.Search{
+	search := entity.Search{UserID: "team-owner",
 		ID:           "team-search",
 		TenantID:     "team-tenant",
 		CreatedBy:    "team-owner",
@@ -297,7 +309,7 @@ func TestSearchServiceListSearchesPaginatesOwnerFilter(t *testing.T) {
 	for i := 1; i <= 5; i++ {
 		createTime := int64(i * 100)
 		status := string(entity.StatusValid)
-		if err := dao.DB.Create(&entity.Search{
+		if err := dao.DB.Create(&entity.Search{UserID: "tenant-1",
 			ID:           fmt.Sprintf("search-%d", i),
 			TenantID:     "tenant-1",
 			Name:         fmt.Sprintf("Search %d", i),

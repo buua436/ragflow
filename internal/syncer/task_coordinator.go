@@ -20,8 +20,10 @@ import (
 	"context"
 	"fmt"
 	"ragflow/internal/dao"
+	"ragflow/internal/permission"
 	"ragflow/internal/service"
 	syncerconnector "ragflow/internal/syncer/connector"
+	"strings"
 	"time"
 )
 
@@ -67,7 +69,15 @@ func NewTaskCoordinator(syncRunnerConfig SyncRunnerConfig, taskDAO *dao.SyncTask
 func (c *TaskCoordinator) Execute(ctx context.Context, taskContext dao.SyncTaskContext, lease ConnectorLockLease) (TaskOutcome, error) {
 	runCtx, cancel := context.WithDeadline(ctx, taskExecutionDeadline(time.Now(), taskContext, lease))
 	defer cancel()
-	ctx = runCtx
+	userID := strings.TrimSpace(taskContext.Connector.UserID)
+	tenantID := strings.TrimSpace(taskContext.Connector.TenantID)
+	if userID == "" || tenantID == "" {
+		return TaskOutcome{}, permission.ErrInvalidPermission
+	}
+	if taskContext.Knowledgebase.TenantID != tenantID {
+		return TaskOutcome{}, permission.ErrIdentityMismatch
+	}
+	ctx = permission.WithIdentity(runCtx, userID, tenantID)
 
 	connector, err := c.registry.Open(ctx, taskContext)
 	if err != nil {

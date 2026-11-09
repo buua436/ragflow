@@ -355,7 +355,7 @@ func (s *ChatPipelineService) AsyncChat(
 			_ = lfClient.PostTrace(ctx, LangfuseTrace{
 				ID:        langfuseTraceID,
 				Name:      "openai_chat",
-				UserID:    chat.TenantID,
+				UserID:    permission.UserIDFromContext(ctx),
 				SessionID: chat.ID,
 				Metadata: map[string]interface{}{
 					"stream":   stream,

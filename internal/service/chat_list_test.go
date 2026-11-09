@@ -64,7 +64,7 @@ func createChatListTestChat(t *testing.T, db *gorm.DB, id, tenantID, name string
 	t.Helper()
 
 	status := string(entity.StatusValid)
-	chat := &entity.Chat{
+	chat := &entity.Chat{UserID: tenantID,
 		ID:           id,
 		TenantID:     tenantID,
 		Name:         &name,
@@ -264,6 +264,37 @@ func TestChatServiceListChatsExactFilters(t *testing.T) {
 // TestChatServiceListChatsPaginatesOwnerBranch covers the owner_ids branch end
 // to end: pagination happens in SQL now, so each page must carry only its own
 // rows while total still reports every matching chat.
+func TestChatServiceOwnerFilterUsesUserIDWithSeparateTenantID(t *testing.T) {
+	db := setupChatListTestDB(t)
+	if err := db.Create(&entity.User{ID: "chat-owner", Nickname: "Chat Owner", Status: sptr("1")}).Error; err != nil {
+		t.Fatalf("create resource owner: %v", err)
+	}
+	name := "separate owner and tenant"
+	status := string(entity.StatusValid)
+	chat := &entity.Chat{
+		UserID: "chat-owner", ID: "chat-separate-owner", TenantID: "tenant-uuid", Name: &name,
+		LLMID: "model-a", LLMSetting: entity.JSONMap{}, PromptType: "simple",
+		PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, Status: &status,
+	}
+	if err := db.Create(chat).Error; err != nil {
+		t.Fatalf("create chat: %v", err)
+	}
+
+	result, err := NewChatService().ListChats(
+		serviceTestContext(t, "chat-owner", "tenant-uuid"), "1", "", "", "", 0, 0,
+		[]dao.OrderTerm{{Column: "create_time", Desc: true}}, []string{"chat-owner"},
+	)
+	if err != nil {
+		t.Fatalf("ListChats: %v", err)
+	}
+	if result.Total != 1 || len(result.Chats) != 1 || result.Chats[0].ID != chat.ID {
+		t.Fatalf("ListChats = %+v, want only the owner’s chat", result)
+	}
+	if result.Chats[0].Nickname != "Chat Owner" {
+		t.Fatalf("owner nickname = %q, want the resource owner’s nickname", result.Chats[0].Nickname)
+	}
+}
+
 func TestChatServiceListChatsPaginatesOwnerBranch(t *testing.T) {
 	db := setupChatListTestDB(t)
 
@@ -271,7 +302,7 @@ func TestChatServiceListChatsPaginatesOwnerBranch(t *testing.T) {
 		name := fmt.Sprintf("owner_page_%d", i)
 		createTime := int64(i * 100)
 		status := string(entity.StatusValid)
-		chat := &entity.Chat{
+		chat := &entity.Chat{UserID: "user-1",
 			ID:           fmt.Sprintf("chat-%d", i),
 			TenantID:     "user-1",
 			Name:         &name,

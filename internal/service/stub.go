@@ -21,12 +21,30 @@ package service
 import (
 	"context"
 
+	dslpkg "ragflow/internal/agent/dsl"
 	"ragflow/internal/common"
 	"ragflow/internal/entity"
 	"ragflow/internal/permission"
 
 	"gorm.io/gorm"
 )
+
+func markChannelAgentRun(ctx context.Context) context.Context { return ctx }
+
+func (s *AgentService) prepareAgentSessionRun(ctx context.Context, runID, _, _, _ string, userInput any, draft, persisted map[string]any) (map[string]any, bool, string, error) {
+	if userInput != nil && s.runTracker != nil {
+		if interruptID, ok, err := s.runTracker.GetInterruptID(ctx, runID); err == nil && ok {
+			if len(persisted) > 0 {
+				return dslpkg.NormalizeForRun(persisted), false, interruptID, nil
+			}
+			return draft, false, interruptID, nil
+		}
+	}
+	if len(persisted) > 0 {
+		draft = dslpkg.NormalizeForRun(persisted)
+	}
+	return draft, false, "", nil
+}
 
 // InitHTTPClientEE is a no-op in the community edition.
 func (h *AdminClient) InitHTTPClientEE() error { return nil }

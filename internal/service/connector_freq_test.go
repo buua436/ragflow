@@ -16,7 +16,7 @@ func setupFreqValidationConnector(t *testing.T) {
 	if err := db.AutoMigrate(&entity.Connector{}); err != nil {
 		t.Fatalf("migrate connector tables: %v", err)
 	}
-	if err := db.Create(&entity.Connector{
+	if err := db.Create(&entity.Connector{UserID: "user-1",
 		ID:          "conn-freq",
 		TenantID:    "user-1",
 		Name:        "conn-freq",

@@ -153,16 +153,10 @@ func (dao *ChatSessionDAO) DeleteByID(ctx context.Context, db *gorm.DB, id strin
 	})
 }
 
-// ListByResourceIDs lists sessions for a chat, optionally restricted to sessionIDs.
-func (dao *ChatSessionDAO) ListByResourceIDs(ctx context.Context, db *gorm.DB, chatID string, sessionIDs []string, sessionID, name, sessionUserID string, terms []OrderTerm, page, pageSize int, options ...ConversationHistoryOptions) ([]*entity.ChatSession, int64, error) {
-	if sessionIDs != nil && len(sessionIDs) == 0 {
-		return []*entity.ChatSession{}, 0, nil
-	}
+// List returns sessions from an already-scoped query with optional business filters.
+func (dao *ChatSessionDAO) List(ctx context.Context, query *gorm.DB, sessionID, name, sessionUserID string, terms []OrderTerm, page, pageSize int, options ...ConversationHistoryOptions) ([]*entity.ChatSession, int64, error) {
 	var chatSessions []*entity.ChatSession
-	query := db.WithContext(ctx).Session(&gorm.Session{QueryFields: true}).Model(&entity.ChatSession{}).Where("dialog_id = ?", chatID)
-	if sessionIDs != nil {
-		query = query.Where("id IN ?", sessionIDs)
-	}
+	query = query.WithContext(ctx).Session(&gorm.Session{QueryFields: true})
 	if sessionID != "" {
 		query = query.Where("id = ?", sessionID)
 	}
@@ -195,7 +189,7 @@ func (dao *ChatSessionDAO) ListByResourceIDs(ctx context.Context, db *gorm.DB, c
 		historyOptions = options[0]
 	}
 	if !historyOptions.NoHistory {
-		if err = hydrateChatSessions(ctx, db, chatSessions, historyOptions); err != nil {
+		if err = hydrateChatSessions(ctx, query.Session(&gorm.Session{NewDB: true}), chatSessions, historyOptions); err != nil {
 			return nil, 0, err
 		}
 	}

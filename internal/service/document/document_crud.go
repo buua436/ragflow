@@ -362,12 +362,28 @@ func (s *DocumentService) RemoveDocumentKeepFile(ctx context.Context, docID stri
 // updates dataset/document counters on insert. The document's ID and timestamps
 // are populated by the caller / model hooks before insertion.
 func (s *DocumentService) InsertDocument(ctx context.Context, doc *entity.Document) error {
-	if doc.UserID == "" {
-		doc.UserID = doc.CreatedBy
+	if doc == nil || doc.ID == "" || doc.UserID == "" || doc.CreatedBy == "" {
+		return permission.ErrInvalidPermission
+	}
+	if permission.UserIDFromContext(ctx) == "" {
+		return permission.ErrUnauthenticated
+	}
+	if permission.UserIDFromContext(ctx) != doc.CreatedBy {
+		return permission.ErrIdentityMismatch
 	}
 	return dao.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(doc).Error; err != nil {
 			return fmt.Errorf("failed to create document: %w", err)
+		}
+		var dataset entity.Knowledgebase
+		if err := tx.Select("tenant_id").Where("id = ?", doc.KbID).Take(&dataset).Error; err != nil {
+			return fmt.Errorf("load document tenant: %w", err)
+		}
+		if permission.TenantIDFromContext(ctx) != dataset.TenantID {
+			return permission.ErrIdentityMismatch
+		}
+		if err := permission.NewDatabaseChecker(tx).GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindDocument, ID: doc.ID}); err != nil {
+			return fmt.Errorf("failed to grant document owner: %w", err)
 		}
 		// Guard the counter bump with RowsAffected: documents.kb_id has no DB-level
 		// FK, so Create can succeed against a non-existent KB and the Update would
@@ -382,9 +398,6 @@ func (s *DocumentService) InsertDocument(ctx context.Context, doc *entity.Docume
 		}
 		if result.RowsAffected == 0 {
 			return fmt.Errorf("knowledgebase %s not found", doc.KbID)
-		}
-		if err := grantDocumentOwnerEE(ctx, tx, doc); err != nil {
-			return fmt.Errorf("grant document owner: %w", err)
 		}
 		return nil
 	})

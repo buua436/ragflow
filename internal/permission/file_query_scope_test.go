@@ -1,4 +1,4 @@
-//go:build !enterprise
+//go:build !ee
 
 package permission
 
@@ -13,7 +13,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func TestFileQueryScopeFiltersInSQLAndReturnsBatchAccessMasks(t *testing.T) {
+func TestFileQueryScopeFiltersAuthorizedIDsBeforePagination(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+url.QueryEscape(t.Name())+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -35,8 +35,8 @@ func TestFileQueryScopeFiltersInSQLAndReturnsBatchAccessMasks(t *testing.T) {
 	}
 
 	for _, dataset := range []entity.Knowledgebase{
-		{ID: "team-dataset", TenantID: "dataset-tenant", Name: "Team", EmbdID: "embedding", Permission: string(entity.TenantPermissionTeam), CreatedBy: "dataset-owner", Status: &valid},
-		{ID: "private-dataset", TenantID: "dataset-tenant", Name: "Private", EmbdID: "embedding", Permission: string(entity.TenantPermissionMe), CreatedBy: "dataset-owner", Status: &valid},
+		{ID: "team-dataset", UserID: "dataset-owner", TenantID: "dataset-tenant", Name: "Team", EmbdID: "embedding", Permission: string(entity.TenantPermissionTeam), CreatedBy: "dataset-owner", Status: &valid},
+		{ID: "private-dataset", UserID: "dataset-owner", TenantID: "dataset-tenant", Name: "Private", EmbdID: "embedding", Permission: string(entity.TenantPermissionMe), CreatedBy: "dataset-owner", Status: &valid},
 	} {
 		if err := db.Create(&dataset).Error; err != nil {
 			t.Fatalf("create dataset %q: %v", dataset.ID, err)
@@ -44,12 +44,11 @@ func TestFileQueryScopeFiltersInSQLAndReturnsBatchAccessMasks(t *testing.T) {
 	}
 
 	for _, file := range []entity.File{
-		{ID: "root", ParentID: "root", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "/", Type: "folder"},
-		{ID: "reader-owned", ParentID: "root", TenantID: "file-tenant", CreatedBy: "reader", Name: "reader.pdf", Type: "pdf"},
-		{ID: "owner-private", ParentID: "root", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "private.pdf", Type: "pdf"},
-		{ID: "empty-owner", ParentID: "root", TenantID: "file-tenant", CreatedBy: "", Name: "legacy.pdf", Type: "pdf"},
-		{ID: "team-linked", ParentID: "root", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "team.pdf", Type: "pdf"},
-		{ID: "private-linked", ParentID: "root", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "private-dataset.pdf", Type: "pdf"},
+		{ID: "root", ParentID: "root", UserID: "file-owner", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "/", Type: "folder"},
+		{ID: "reader-owned", ParentID: "root", UserID: "reader", TenantID: "file-tenant", CreatedBy: "reader", Name: "reader.pdf", Type: "pdf"},
+		{ID: "owner-private", ParentID: "root", UserID: "file-owner", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "private.pdf", Type: "pdf"},
+		{ID: "team-linked", ParentID: "root", UserID: "file-owner", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "team.pdf", Type: "pdf"},
+		{ID: "private-linked", ParentID: "root", UserID: "file-owner", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "private-dataset.pdf", Type: "pdf"},
 	} {
 		if err := db.Create(&file).Error; err != nil {
 			t.Fatalf("create file %q: %v", file.ID, err)
@@ -57,8 +56,8 @@ func TestFileQueryScopeFiltersInSQLAndReturnsBatchAccessMasks(t *testing.T) {
 	}
 
 	for _, document := range []entity.Document{
-		{ID: "team-document", KbID: "team-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "dataset-owner", Suffix: "pdf", Status: &valid},
-		{ID: "private-document", KbID: "private-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "dataset-owner", Suffix: "pdf", Status: &valid},
+		{ID: "team-document", UserID: "dataset-owner", KbID: "team-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "dataset-owner", Suffix: "pdf", Status: &valid},
+		{ID: "private-document", UserID: "dataset-owner", KbID: "private-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "dataset-owner", Suffix: "pdf", Status: &valid},
 	} {
 		if err := db.Create(&document).Error; err != nil {
 			t.Fatalf("create document %q: %v", document.ID, err)

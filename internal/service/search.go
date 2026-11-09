@@ -74,33 +74,39 @@ type SearchShareDetail struct {
 }
 
 // ListSearches list search apps with advanced filtering (equivalent to list_search_app)
-func (s *SearchService) ListSearches(ctx context.Context, keywords string, page, pageSize int, terms []dao.OrderTerm, ownerIDs []string) (*ListSearchAppsResponse, error) {
-	scope, err := permission.NewDatabaseChecker(dao.DB).Scope(ctx, permission.ScopeQuery{
-		Kind:      permission.ResourceKindSearchApp,
-		Operation: permission.OperationRead,
+func (s *SearchService) ListSearches(ctx context.Context, keywords string, page, pageSize int, terms []dao.OrderTerm, ownerUserIDs []string) (*ListSearchAppsResponse, error) {
+	checker := permission.NewDatabaseChecker(dao.DB)
+	scope, err := checker.QueryScope(ctx, permission.ScopeQuery{
+		Kind:         permission.ResourceKindSearchApp,
+		Operation:    permission.OperationRead,
+		OwnerUserIDs: ownerUserIDs,
 	})
 	if err != nil {
 		return nil, err
 	}
-	var resourceIDs []string
-	if scope.Mode == permission.ScopeIDs {
-		resourceIDs = scope.ResourceIDs
-	}
-	searches, total, err := s.searchDAO.ListByResourceIDs(ctx, dao.DB, resourceIDs, ownerIDs, page, pageSize, terms, keywords)
+	query := scope.Apply(dao.DB.WithContext(ctx).Model(&entity.Search{}))
+	searches, total, err := s.searchDAO.List(ctx, query, page, pageSize, terms, keywords)
 	if err != nil {
 		return nil, err
 	}
 
 	// Convert to response format
 	searchApps := make([]map[string]interface{}, len(searches))
-	checker := permission.NewDatabaseChecker(dao.DB)
+	refs := make([]permission.ResourceRef, len(searches))
 	for i, search := range searches {
-		access, err := checker.ResolveAccess(ctx, permission.ResourceRef{
+		refs[i] = permission.ResourceRef{
 			Kind: permission.ResourceKindSearchApp,
 			ID:   search.ID,
-		})
-		if err != nil {
-			return nil, err
+		}
+	}
+	accesses, err := checker.FilterAccesses(ctx, refs, permission.OperationRead)
+	if err != nil {
+		return nil, err
+	}
+	for i, search := range searches {
+		access, ok := accesses[refs[i]]
+		if !ok {
+			return nil, permission.ErrPermissionDenied
 		}
 		searchApps[i] = s.toSearchAppResponse(search)
 		searchApps[i]["operator_permission"] = access.PermissionMask
@@ -124,7 +130,7 @@ func (s *SearchService) toSearchAppResponse(search *entity.SearchListItem) map[s
 		"create_time":   search.CreateTime,
 		"update_time":   search.UpdateTime,
 		"search_config": BuildSearchConfigResponse(map[string]interface{}(search.SearchConfig)),
-		"nickname":      ownerNickname(search.Nickname, search.TenantID),
+		"nickname":      ownerNickname(search.Nickname, search.UserID),
 	}
 
 	if search.Avatar != nil {

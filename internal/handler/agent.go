@@ -331,8 +331,8 @@ func (h *AgentHandler) GetAgent(c *gin.Context) {
 		return
 	}
 	tenantID := ""
-	if row != nil {
-		tenantID = row.EffectiveTenantID()
+	if row != nil && row.TenantID != nil {
+		tenantID = strings.TrimSpace(*row.TenantID)
 	}
 	common.RespondSuccess(c, &agentDetailResponse{
 		UserCanvas:      row,

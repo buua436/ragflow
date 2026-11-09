@@ -44,10 +44,10 @@ func TestMemorySaverAuthorizesWithAuthenticatedCanvasCaller(t *testing.T) {
 	if err := dao.DB.Create(&canvas).Error; err != nil {
 		t.Fatalf("seed canvas: %v", err)
 	}
-	if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, "canvas-owner", "caller", "canvas-owner"); err != nil {
+	if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, "canvas-owner", "canvas-owner", "caller"); err != nil {
 		t.Fatalf("prepare canvas permission fixture: %v", err)
 	}
-	memory := entity.Memory{
+	memory := entity.Memory{UserID: "canvas-owner",
 		ID:               "memory-1",
 		Name:             "Shared memory",
 		TenantID:         "canvas-owner",
@@ -66,7 +66,7 @@ func TestMemorySaverAuthorizesWithAuthenticatedCanvasCaller(t *testing.T) {
 	state.Sys["user_id"] = "caller"
 	ctx = runtime.WithState(ctx, state)
 	ownerCtx := permission.WithIdentity(ctx, "canvas-owner", "canvas-owner")
-	if err := permission.NewDatabaseChecker(dao.DB).CheckResource(permission.WithIdentity(ownerCtx, "canvas-owner", ""), permission.ResourceRef{
+	if err := permission.NewDatabaseChecker(dao.DB).CheckResource(ownerCtx, permission.ResourceRef{
 		Kind: permission.ResourceKindMemory, ID: memory.ID,
 	}, permission.OperationUse); err != nil {
 		t.Fatalf("canvas owner should be able to use memory: %v", err)

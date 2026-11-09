@@ -488,27 +488,13 @@ func (f *ModelFactory) authorize(ctx context.Context) error {
 		return fmt.Errorf("%w: tenant id is required", errModelConfigUnavailable)
 	}
 	userID := strings.TrimSpace(permission.UserIDFromContext(ctx))
-	// A user's personal tenant uses the user ID as its tenant ID. The owner
-	// does not need a user_tenant membership row for that tenant; modelIdentity
-	// still checks whether the requested provider belongs to a reachable tenant.
-	if userID == "" || userID == tenantID {
-		return nil
+	if userID == "" {
+		return permission.ErrUnauthenticated
 	}
 	if err := permission.NewDatabaseChecker(dao.DB).CheckTenant(ctx, tenantID, permission.TenantMember); err != nil {
 		return fmt.Errorf("%w: user %s has no access to tenant %s: %w", errModelConfigUnavailable, userID, tenantID, err)
 	}
 	return nil
-}
-
-func (f *ModelFactory) tenantOwnerMembership(ctx context.Context, tenantID string) (*entity.UserTenant, error) {
-	if f == nil || f.userTenantDAO == nil {
-		return nil, fmt.Errorf("%w: user tenant DAO is not initialized", errModelConfigUnavailable)
-	}
-	membership, err := f.userTenantDAO.GetOwnerByTenantID(ctx, dao.DB, tenantID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get tenant owner: %s: %w", tenantID, err)
-	}
-	return membership, nil
 }
 
 func (f *ModelFactory) resolveDefaultConfig(ctx context.Context, modelType entity.ModelType) (*modelTarget, error) {
@@ -528,16 +514,10 @@ func (f *ModelFactory) defaultModelReference(ctx context.Context, modelType enti
 	}
 	tenantID := strings.TrimSpace(permission.TenantIDFromContext(ctx))
 	userID := strings.TrimSpace(permission.UserIDFromContext(ctx))
-	var membership *entity.UserTenant
-	var err error
 	if userID == "" {
-		membership, err = f.tenantOwnerMembership(ctx, tenantID)
-	} else {
-		membership, err = f.userTenantDAO.FilterByUserIDAndTenantID(ctx, dao.DB, userID, tenantID)
-		if errors.Is(err, gorm.ErrRecordNotFound) && userID == tenantID {
-			membership, err = f.tenantOwnerMembership(ctx, tenantID)
-		}
+		return "", permission.ErrUnauthenticated
 	}
+	membership, err := f.userTenantDAO.FilterByUserIDAndTenantID(ctx, dao.DB, userID, tenantID)
 	if err != nil {
 		return "", fmt.Errorf("failed to get user tenant model settings: %s type %s: %w", tenantID, modelType, err)
 	}
@@ -664,9 +644,9 @@ func (s *ModelFactory) resolveModelIdentity(ctx context.Context, requestedType e
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, err
 	}
-	owner, err := s.tenantOwnerMembership(ctx, tenantID)
+	owner, err := permission.TenantOwnerMembership(ctx, dao.DB, tenantID)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to get tenant owner: %s: %w", tenantID, err)
 	}
 	identity := &modelIdentity{modelEntity: model}
 	var candidates []*entity.TenantModel

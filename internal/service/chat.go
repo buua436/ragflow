@@ -51,17 +51,12 @@ var ReadOnlyFields = map[string]struct{}{
 	"update_date": {},
 }
 
-type resourceScopeChecker interface {
-	CheckResource(context.Context, permission.ResourceRef, permission.Operation) error
-	Scope(context.Context, permission.ScopeQuery) (permission.Scope, error)
-}
-
 // ChatService chat service
 type ChatService struct {
 	chatDAO           *dao.ChatDAO
 	kbDAO             *dao.KnowledgebaseDAO
 	tenantDAO         *dao.TenantDAO
-	permissionChecker resourceScopeChecker
+	permissionChecker *permission.Checker
 }
 
 // NewChatService create chat service
@@ -108,52 +103,35 @@ type ListChatsResponse struct {
 }
 
 // ListChats list chats for a user
-func (s *ChatService) ListChats(ctx context.Context, status, keywords, id, name string, page, pageSize int, terms []dao.OrderTerm, ownerIDs []string) (*ListChatsResponse, error) {
-	chatScope, err := s.permissionChecker.Scope(ctx, permission.ScopeQuery{
-		Kind:      permission.ResourceKindChat,
-		Operation: permission.OperationRead,
+func (s *ChatService) ListChats(ctx context.Context, status, keywords, id, name string, page, pageSize int, terms []dao.OrderTerm, ownerUserIDs []string) (*ListChatsResponse, error) {
+	chatScope, err := s.permissionChecker.QueryScope(ctx, permission.ScopeQuery{
+		Kind:         permission.ResourceKindChat,
+		Operation:    permission.OperationRead,
+		OwnerUserIDs: ownerUserIDs,
 	})
 	if err != nil {
 		return nil, err
 	}
-	chatIDs := chatScope.ResourceIDs
-	if chatScope.Mode == permission.ScopeNone {
-		chatIDs = []string{}
-	}
-	var ownerFilter []string
-	if len(ownerIDs) > 0 {
-		ownerFilter = make([]string, 0, len(ownerIDs))
-		seen := make(map[string]struct{}, len(ownerIDs))
-		for _, ownerID := range ownerIDs {
-			ownerID = strings.TrimSpace(ownerID)
-			if ownerID == "" {
-				continue
-			}
-			if _, exists := seen[ownerID]; exists {
-				continue
-			}
-			seen[ownerID] = struct{}{}
-			ownerFilter = append(ownerFilter, ownerID)
-		}
-		if len(ownerFilter) == 0 {
-			return &ListChatsResponse{Chats: []*ChatWithKBNames{}}, nil
-		}
-	}
-	chats, total, err := s.chatDAO.ListByResourceIDs(ctx, dao.DB, chatIDs, ownerFilter, page, pageSize, terms, keywords, id, name)
+	query := chatScope.Apply(dao.DB.WithContext(ctx).Model(&entity.Chat{}))
+	chats, total, err := s.chatDAO.List(ctx, query, page, pageSize, terms, keywords, id, name)
 	if err != nil {
 		return nil, err
 	}
 
 	// Enrich with knowledge base names
 	chatsWithKBNames := make([]*ChatWithKBNames, 0, len(chats))
-	checker := permission.NewDatabaseChecker(dao.DB)
+	refs := make([]permission.ResourceRef, len(chats))
+	for i, chat := range chats {
+		refs[i] = permission.ResourceRef{Kind: permission.ResourceKindChat, ID: chat.ID}
+	}
+	accesses, err := s.permissionChecker.FilterAccesses(ctx, refs, permission.OperationRead)
+	if err != nil {
+		return nil, err
+	}
 	for _, chat := range chats {
-		access, err := checker.ResolveAccess(ctx, permission.ResourceRef{
-			Kind: permission.ResourceKindChat,
-			ID:   chat.ID,
-		})
-		if err != nil {
-			return nil, err
+		access, ok := accesses[permission.ResourceRef{Kind: permission.ResourceKindChat, ID: chat.ID}]
+		if !ok {
+			return nil, permission.ErrPermissionDenied
 		}
 		chat.Chat.OperatorPermission = access.PermissionMask
 		kbNames, datasetIDs := s.getDatasetNamesAndIDs(ctx, chat.KBIDs)
@@ -161,7 +139,7 @@ func (s *ChatService) ListChats(ctx context.Context, status, keywords, id, name 
 			Chat:         &chat.Chat,
 			KBNames:      kbNames,
 			DatasetIDs:   datasetIDs,
-			Nickname:     ownerNickname(chat.Nickname, chat.TenantID),
+			Nickname:     ownerNickname(chat.Nickname, chat.UserID),
 			TenantAvatar: chat.TenantAvatar,
 		})
 	}
@@ -172,11 +150,11 @@ func (s *ChatService) ListChats(ctx context.Context, status, keywords, id, name 
 	}, nil
 }
 
-func ownerNickname(nickname *string, tenantID string) string {
+func ownerNickname(nickname *string, ownerUserID string) string {
 	if nickname != nil && strings.TrimSpace(*nickname) != "" {
 		return *nickname
 	}
-	return tenantID
+	return ownerUserID
 }
 
 type CreateChatRequest struct {
@@ -1350,16 +1328,17 @@ func checkDuplicateChatIDs(ids []string) ([]string, []string) {
 func (s *ChatService) BulkDeleteChats(ctx context.Context, req *BulkDeleteChatsRequest) (map[string]interface{}, error) {
 	ids := req.IDs
 	if len(ids) == 0 && req.DeleteAll {
-		chatScope, err := s.permissionChecker.Scope(ctx, permission.ScopeQuery{
+		chatScope, err := s.permissionChecker.QueryScope(ctx, permission.ScopeQuery{
 			Kind:      permission.ResourceKindChat,
 			Operation: permission.OperationDelete,
 		})
 		if err != nil {
 			return nil, err
 		}
-		chatIDs := chatScope.ResourceIDs
-		if chatScope.Mode == permission.ScopeNone {
-			chatIDs = []string{}
+		query := chatScope.Apply(dao.DB.WithContext(ctx).Model(&entity.Chat{}))
+		chatIDs, err := s.chatDAO.ListIDs(ctx, query)
+		if err != nil {
+			return nil, err
 		}
 		ids = append(ids, chatIDs...)
 		if len(ids) == 0 {

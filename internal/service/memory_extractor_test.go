@@ -235,12 +235,16 @@ func TestExtractMemoryTaskKeepsLookupFailureRetryable(t *testing.T) {
 // TestExtractByLLMMarksMissingModelPermanent verifies a deleted model
 // reference terminates its durable task before any model call is attempted.
 func TestExtractByLLMMarksMissingModelPermanent(t *testing.T) {
-	db := testutil.SetupTestDB(t, &entity.TenantModel{})
+	db := testutil.SetupTestDB(t, &entity.TenantModel{}, &entity.UserTenant{})
 	cleanup := testutil.ReplaceDBForTest(t, db)
 	defer cleanup()
+	status := string(entity.StatusValid)
+	if err := db.Create(&entity.UserTenant{ID: "owner-tenant-1", UserID: "owner-1", TenantID: "tenant-1", Role: "owner", Status: &status}).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	svc := NewMemoryMessageService(NewMemoryService(dao.DB, engine.Get()))
-	mem := &CreateMemoryResponse{Memory: entity.Memory{
+	mem := &CreateMemoryResponse{Memory: entity.Memory{UserID: "owner-1",
 		TenantID: "tenant-1",
 		LLMID:    "deleted-model-id",
 	}}
@@ -257,11 +261,16 @@ func TestExtractByLLMMarksInvalidModelConfigPermanent(t *testing.T) {
 		&entity.TenantModel{},
 		&entity.TenantModelProvider{},
 		&entity.TenantModelInstance{},
+		&entity.UserTenant{},
 	)
 	cleanup := testutil.ReplaceDBForTest(t, db)
 	defer cleanup()
+	status := string(entity.StatusValid)
+	if err := db.Create(&entity.UserTenant{ID: "owner-tenant-1", UserID: "owner-1", TenantID: "tenant-1", Role: "owner", Status: &status}).Error; err != nil {
+		t.Fatal(err)
+	}
 
-	if err := db.Create(&entity.TenantModelProvider{
+	if err := db.Create(&entity.TenantModelProvider{UserID: "owner-1",
 		ID:           "provider-1",
 		ProviderName: "OpenAI",
 		TenantID:     "tenant-1",
@@ -280,7 +289,7 @@ func TestExtractByLLMMarksInvalidModelConfigPermanent(t *testing.T) {
 	}
 
 	svc := NewMemoryMessageService(NewMemoryService(dao.DB, engine.Get()))
-	mem := &CreateMemoryResponse{Memory: entity.Memory{
+	mem := &CreateMemoryResponse{Memory: entity.Memory{UserID: "owner-1",
 		TenantID: "tenant-1",
 		LLMID:    "gpt-4o@default@OpenAI",
 	}}
@@ -539,7 +548,7 @@ func TestHandleSaveToMemoryTaskDoesNotReportUnpersistedExtraction(t *testing.T) 
 	cleanup := testutil.ReplaceDBForTest(t, db)
 	defer cleanup()
 
-	if err := db.Create(&entity.Memory{
+	if err := db.Create(&entity.Memory{UserID: "tenant-1",
 		ID:               "memory-raw",
 		Name:             "raw memory",
 		TenantID:         "tenant-1",

@@ -172,7 +172,9 @@ func TestPersistAgentRunSessionPreservesThinking(t *testing.T) {
 		"begin_0":   map[string]any{"obj": map[string]any{"component_name": "Begin", "params": map[string]any{}}, "downstream": []any{"message_0"}},
 		"message_0": map[string]any{"obj": map[string]any{"component_name": "Message", "params": map[string]any{"text": "answer {{sys.query}}"}}, "upstream": []any{"begin_0"}},
 	}, "path": []any{"begin_0", "message_0"}}
-	if err := testDB.Create(&entity.UserCanvas{ID: "canvas-think", UserID: "user-1", DSL: dsl}).Error; err != nil {
+	if err := testDB.Create(&entity.UserCanvas{ID: "canvas-think", UserID: "user-1", DSL: dsl,
+		TenantID: sptr("user-1"),
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	sqlDB, err := testDB.DB()

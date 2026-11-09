@@ -34,6 +34,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/permission"
+	permissionresponse "ragflow/internal/permission/response"
 	"ragflow/internal/service"
 	"ragflow/internal/service/billing"
 	dataset "ragflow/internal/service/dataset"
@@ -277,9 +278,13 @@ func (h *DatasetsHandler) CreateDataset(c *gin.Context) {
 
 	ctx := c.Request.Context()
 
-	tenantID := strings.TrimSpace(c.GetString("tenant_id"))
+	tenantID := strings.TrimSpace(permission.TenantIDFromContext(ctx))
 	if tenantID == "" {
-		tenantID = user.ID
+		code, normalized := permissionresponse.Normalize(permission.ErrTenantContextMissing)
+		common.RespondError(c, code, normalized.Error())
+		operationLog.Code = int(code)
+		operationLog.Error = normalized
+		return
 	}
 
 	// Application quota: every new dataset counts as one app, matching
@@ -1052,6 +1057,9 @@ func (h *DatasetsHandler) GetCompilationStatus(c *gin.Context) {
 	kind := strings.TrimSpace(c.Query("kind"))
 	st, code, err := h.datasetsService.GetDatasetCompilationStatus(ctx, datasetID, kind)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		common.RespondError(c, code, err.Error())
 		return
 	}

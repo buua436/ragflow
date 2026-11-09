@@ -16,8 +16,6 @@
 
 package entity
 
-import "strings"
-
 // UserCanvas user canvas model
 type UserCanvas struct {
 	ID                 string  `gorm:"column:id;primaryKey;size:32" json:"id"`
@@ -39,20 +37,6 @@ type UserCanvas struct {
 // TableName specify table name
 func (UserCanvas) TableName() string {
 	return "user_canvas"
-}
-
-// EffectiveTenantID returns the canvas tenant, falling back to its creator for
-// rows written before tenant_id was populated.
-func (canvas *UserCanvas) EffectiveTenantID() string {
-	if canvas == nil {
-		return ""
-	}
-	if canvas.TenantID != nil {
-		if tenantID := strings.TrimSpace(*canvas.TenantID); tenantID != "" {
-			return tenantID
-		}
-	}
-	return strings.TrimSpace(canvas.UserID)
 }
 
 // CanvasTemplate canvas template model

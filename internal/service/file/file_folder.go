@@ -23,9 +23,9 @@ func (s *FileService) GetRootFolder(ctx context.Context) (map[string]interface{}
 	}
 	tenantID := permission.TenantIDFromContext(ctx)
 	if tenantID == "" {
-		tenantID = userID
+		return nil, permission.ErrTenantContextMissing
 	}
-	file, err := s.fileDAO.GetRootFolder(ctx, dao.DB, tenantID)
+	file, err := GetOrCreateRootFolder(ctx, dao.DB)
 	if err != nil {
 		return nil, err
 	}
@@ -51,10 +51,8 @@ func (s *FileService) ListFilesForTenant(ctx context.Context, tenantID, pfID str
 	if userID == "" {
 		return nil, permission.ErrUnauthenticated
 	}
-	if userID != tenantID {
-		if err := permission.NewDatabaseChecker(dao.DB).CheckTenant(ctx, tenantID, permission.TenantMember); err != nil {
-			return nil, err
-		}
+	if err := permission.NewDatabaseChecker(dao.DB).CheckTenant(ctx, tenantID, permission.TenantMember); err != nil {
+		return nil, err
 	}
 	return s.listFiles(ctx, tenantID, pfID, page, pageSize, terms, keywords)
 }
@@ -66,7 +64,7 @@ func (s *FileService) listFiles(ctx context.Context, tenantID, pfID string, page
 	}
 	// If pfID is empty, get root folder and initialize dataset docs
 	if pfID == "" {
-		rootFolder, err := s.fileDAO.GetRootFolder(ctx, dao.DB, tenantID)
+		rootFolder, err := GetOrCreateRootFolder(ctx, dao.DB)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get root folder: %w", err)
 		}
@@ -77,7 +75,11 @@ func (s *FileService) listFiles(ctx context.Context, tenantID, pfID string, page
 
 		// Keep tenant-scoped lookups read-only. The default self-owned file
 		// listing retains its existing folder initialization.
-		if tenantID == userID {
+		owner, ownerErr := permission.TenantOwnerMembership(ctx, dao.DB, tenantID)
+		if ownerErr != nil {
+			return nil, fmt.Errorf("resolve tenant owner for folder initialization: %w", ownerErr)
+		}
+		if owner.UserID == userID {
 			// Initialize dataset docs (matching Python init_knowledgebase_docs logic)
 			if err = s.initDatasetDocs(ctx, pfID, tenantID); err != nil {
 				return nil, fmt.Errorf("failed to initialize dataset docs: %w", err)
@@ -201,7 +203,44 @@ func (s *FileService) listFiles(ctx context.Context, tenantID, pfID string, page
 // initDatasetDocs initializes dataset documents for tenant
 // This matches Python's FileService.init_dataset_docs method
 func (s *FileService) initDatasetDocs(ctx context.Context, rootID, tenantID string) error {
-	return s.fileDAO.InitDatasetDocs(ctx, dao.DB, rootID, tenantID, s.file2DocumentDAO)
+	return dao.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		before, err := s.fileDAO.GetSubtreeIDs(ctx, tx, tenantID, rootID)
+		if err != nil {
+			return err
+		}
+		known := make(map[string]struct{}, len(before))
+		for _, id := range before {
+			known[id] = struct{}{}
+		}
+		if err := s.fileDAO.InitDatasetDocs(ctx, tx, rootID, tenantID, s.file2DocumentDAO); err != nil {
+			return err
+		}
+		after, err := s.fileDAO.GetSubtreeIDs(ctx, tx, tenantID, rootID)
+		if err != nil {
+			return err
+		}
+		createdIDs := make([]string, 0, len(after)-len(before))
+		for _, id := range after {
+			if _, exists := known[id]; !exists {
+				createdIDs = append(createdIDs, id)
+			}
+		}
+		createdFiles, err := s.fileDAO.GetByIDs(ctx, tx, createdIDs)
+		if err != nil {
+			return err
+		}
+		checker := permission.NewDatabaseChecker(tx)
+		for _, created := range createdFiles {
+			kind := permission.ResourceKindFile
+			if created.Type == FileTypeFolder {
+				kind = permission.ResourceKindFolder
+			}
+			if err := checker.GrantResourceOwner(ctx, permission.ResourceRef{Kind: kind, ID: created.ID}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // initSkillsFolder initializes the skills folder under the root folder.
@@ -233,19 +272,28 @@ func (s *FileService) initSkillsFolder(ctx context.Context, rootID, tenantID str
 		}
 		return nil
 	}
+	root, err := s.fileDAO.GetByID(ctx, dao.DB, rootID)
+	if err != nil {
+		return err
+	}
 
 	folder := &entity.File{
 		ID:         common.GenerateToken(),
 		ParentID:   rootID,
-		UserID:     tenantID,
-		TenantID:   tenantID,
-		CreatedBy:  tenantID,
+		UserID:     root.UserID,
+		TenantID:   root.TenantID,
+		CreatedBy:  root.CreatedBy,
 		Name:       SkillsFolderName,
 		Type:       FileTypeFolder,
 		Size:       0,
 		SourceType: "",
 	}
-	return s.fileDAO.Insert(ctx, dao.DB, folder)
+	return dao.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.fileDAO.Insert(ctx, tx, folder); err != nil {
+			return err
+		}
+		return permission.NewDatabaseChecker(tx).GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindFolder, ID: folder.ID})
+	})
 }
 
 // toFileResponse converts file model to response format
@@ -347,10 +395,8 @@ func (s *FileService) GetAllParentFoldersForTenant(ctx context.Context, tenantID
 	if userID == "" {
 		return nil, permission.ErrUnauthenticated
 	}
-	if userID != tenantID {
-		if err := permission.NewDatabaseChecker(dao.DB).CheckTenant(ctx, tenantID, permission.TenantMember); err != nil {
-			return nil, err
-		}
+	if err := permission.NewDatabaseChecker(dao.DB).CheckTenant(ctx, tenantID, permission.TenantMember); err != nil {
+		return nil, err
 	}
 	return s.getAllParentFolders(ctx, tenantID, fileID)
 }
@@ -452,7 +498,7 @@ func (s *FileService) CreateFolder(ctx context.Context, name, parentID, fileType
 	}
 	tenantID := permission.TenantIDFromContext(ctx)
 	if tenantID == "" {
-		tenantID = userID
+		return nil, permission.ErrTenantContextMissing
 	}
 	var err error
 	if err = permission.NewDatabaseChecker(dao.DB).CheckFeature(ctx, "file", permission.ActionWrite); err != nil {
@@ -466,7 +512,7 @@ func (s *FileService) CreateFolder(ctx context.Context, name, parentID, fileType
 	}
 
 	if parentID == "" {
-		rootFolder, err := s.fileDAO.GetRootFolder(ctx, dao.DB, tenantID)
+		rootFolder, err := GetOrCreateRootFolder(ctx, dao.DB)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get root folder: %w", err)
 		}
@@ -758,8 +804,14 @@ func (s *FileService) moveEntryRecursive(ctx context.Context, sourceFile *entity
 			}
 		} else {
 			// Create new folder
-			var err error
-			newFolder, err = s.fileDAO.CreateFolder(ctx, dao.DB, destFolder.ID, sourceFile.TenantID, permission.UserIDFromContext(ctx), effectiveName, FileTypeFolder)
+			err := dao.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+				var createErr error
+				newFolder, createErr = s.fileDAO.CreateFolder(ctx, tx, destFolder.ID, sourceFile.TenantID, permission.UserIDFromContext(ctx), effectiveName, FileTypeFolder)
+				if createErr != nil {
+					return createErr
+				}
+				return permission.NewDatabaseChecker(tx).GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindFolder, ID: newFolder.ID})
+			})
 			if err != nil {
 				return fmt.Errorf("failed to create destination folder: %w", err)
 			}

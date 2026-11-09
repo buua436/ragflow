@@ -431,7 +431,7 @@ func setupDocumentPermissionDB(t *testing.T, accessible bool) {
 	); err != nil {
 		t.Fatalf("failed to migrate permission tables: %v", err)
 	}
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "owner-user",
 		ID:         "kb-owner",
 		TenantID:   "tenant-owner",
 		Name:       "owner-kb",
@@ -442,7 +442,7 @@ func setupDocumentPermissionDB(t *testing.T, accessible bool) {
 	}).Error; err != nil {
 		t.Fatalf("insert knowledgebase: %v", err)
 	}
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "owner-user",
 		ID: "doc-1", KbID: "kb-owner", ParserID: "naive", ParserConfig: entity.JSONMap{},
 		CreatedBy: "owner-user", Type: "pdf", Suffix: "pdf", Status: sptr(string(entity.StatusValid)),
 	}).Error; err != nil {
@@ -474,7 +474,7 @@ func setupDocumentPermissionDB(t *testing.T, accessible bool) {
 	} else if err := db.Create(&entity.User{ID: "user-1", Nickname: "user-1", Email: "user-1@test.local"}).Error; err != nil {
 		t.Fatalf("insert non-member user: %v", err)
 	}
-	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-owner", members...); err != nil {
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-owner", "owner-user", members...); err != nil {
 		t.Fatalf("prepare document permission fixture: %v", err)
 	}
 
@@ -773,7 +773,7 @@ func setupUploadHandlerDB(t *testing.T, role string) *gorm.DB {
 		t.Fatalf("insert tenant owner: %v", err)
 	}
 	pipelineID := "pipe-1"
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "owner-1",
 		ID:           "123e4567e89b12d3a456426614174000",
 		TenantID:     "tenant-1",
 		Name:         "kb-upload",
@@ -872,7 +872,7 @@ func TestUploadDocumentsHandler_LocalUsesFullKBAndIgnoresBadParserConfig(t *test
 	orig := dao.DB
 	dao.DB = db
 	t.Cleanup(func() { dao.DB = orig })
-	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "user-1", "owner-1"); err != nil {
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "owner-1", "user-1"); err != nil {
 		t.Fatalf("prepare upload permission fixture: %v", err)
 	}
 
@@ -915,7 +915,7 @@ func TestUploadDocumentsHandler_LocalPartialFailureOmitsData(t *testing.T) {
 	orig := dao.DB
 	dao.DB = db
 	t.Cleanup(func() { dao.DB = orig })
-	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "user-1", "owner-1"); err != nil {
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "owner-1", "user-1"); err != nil {
 		t.Fatalf("prepare upload permission fixture: %v", err)
 	}
 
@@ -1319,16 +1319,16 @@ func setupHandlerAccessDB(t *testing.T) *gorm.DB {
 	db.Create(&entity.UserTenant{ID: "ut-owner", UserID: "owner-1", TenantID: "tenant-1", Role: "owner", Status: sptr(string(entity.StatusValid)), LLMID: "llm-1", EmbdID: "embd-1", ASRID: "asr-1"})
 	db.Create(&entity.UserTenant{ID: "ut-1", UserID: "user-1", TenantID: "tenant-1", Role: "normal", Status: sptr(string(entity.StatusValid))})
 	// Insert knowledgebase and its document for the resource-level access check.
-	db.Create(&entity.Knowledgebase{
+	db.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID: "ds-1", TenantID: "tenant-1", Name: "test-kb", EmbdID: "embd-1",
 		CreatedBy: "user-1", Permission: string(entity.TenantPermissionTeam),
 		Status: sptr(string(entity.StatusValid)),
 	})
-	db.Create(&entity.Document{
+	db.Create(&entity.Document{UserID: "user-1",
 		ID: "doc-1", KbID: "ds-1", ParserID: "naive", ParserConfig: entity.JSONMap{},
 		CreatedBy: "user-1", Type: "pdf", Suffix: "pdf", Status: sptr(string(entity.StatusValid)),
 	})
-	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "user-1", "owner-1"); err != nil {
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "owner-1", "user-1"); err != nil {
 		t.Fatalf("prepare document handler permission fixture: %v", err)
 	}
 

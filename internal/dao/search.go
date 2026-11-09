@@ -48,28 +48,20 @@ type SearchDetailRow struct {
 	TenantAvatar *string        `gorm:"column:tenant_avatar"`
 }
 
-// ListByResourceIDs lists only the authorized Search Apps, with optional
-// tenant-owner filtering and pagination.
-func (dao *SearchDAO) ListByResourceIDs(ctx context.Context, db *gorm.DB, resourceIDs, ownerIDs []string, page, pageSize int, terms []OrderTerm, keywords string) ([]*entity.SearchListItem, int64, error) {
+// List searches rows from a query already constrained by the caller.
+func (dao *SearchDAO) List(ctx context.Context, query *gorm.DB, page, pageSize int, terms []OrderTerm, keywords string) ([]*entity.SearchListItem, int64, error) {
 	var searches []*entity.SearchListItem
 	var total int64
-	if len(resourceIDs) == 0 {
-		return []*entity.SearchListItem{}, 0, nil
-	}
 
-	// Build query with join to user table for nickname and avatar
-	query := db.WithContext(ctx).Model(&entity.Search{}).
+	query = query.WithContext(ctx).
 		Select(`
 			search.*,
 			user.nickname,
 			user.avatar as tenant_avatar
 		`).
-		Joins("LEFT JOIN user ON search.tenant_id = user.id")
+		Joins("LEFT JOIN user ON search.user_id = user.id")
 
-	query = query.Where("search.id IN ? AND search.status = ?", resourceIDs, "1")
-	if len(ownerIDs) > 0 {
-		query = query.Where("search.tenant_id IN ?", ownerIDs)
-	}
+	query = query.Where("search.status = ?", "1")
 
 	// Apply keyword filter
 	if keywords != "" {
@@ -130,7 +122,7 @@ func (dao *SearchDAO) GetDetailByID(ctx context.Context, db *gorm.DB, searchID s
 			user.nickname,
 			user.avatar AS tenant_avatar
 		`).
-		Joins("JOIN user ON user.id = search.tenant_id AND user.status = ?", "1").
+		Joins("JOIN user ON user.id = search.user_id AND user.status = ?", "1").
 		Where("search.id = ? AND search.status = ?", searchID, "1").
 		Scan(&detail).Error
 	if err != nil {
@@ -151,9 +143,6 @@ func (dao *SearchDAO) GetByNameAndTenant(ctx context.Context, db *gorm.DB, name 
 
 // Create creates a new search
 func (dao *SearchDAO) Create(ctx context.Context, db *gorm.DB, search *entity.Search) error {
-	if search.UserID == "" {
-		search.UserID = search.CreatedBy
-	}
 	return db.WithContext(ctx).Create(search).Error
 }
 

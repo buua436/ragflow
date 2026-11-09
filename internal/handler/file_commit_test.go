@@ -177,12 +177,12 @@ func setupFileCommitTestWithHandler(userID string) (*gin.Engine, *mockFileCommit
 			panic(err)
 		}
 	}
-	seed(&entity.File{ID: "folder-1", TenantID: userID, CreatedBy: userID, Name: "workspace", Type: "folder"})
-	seed(&entity.File{ID: "f1", TenantID: userID, CreatedBy: userID, Name: "test.txt", Type: "file"})
+	seed(&entity.File{UserID: userID, ID: "folder-1", TenantID: userID, CreatedBy: userID, Name: "workspace", Type: "folder"})
+	seed(&entity.File{UserID: userID, ID: "f1", TenantID: userID, CreatedBy: userID, Name: "test.txt", Type: "file"})
 	// The mirrored /datasets/{dataset_id}/commits test route maps dataset_id
 	// straight onto folder_id, so seed kb-1 as a folder the user owns to pass
 	// the folder authorization main added.
-	seed(&entity.File{ID: "kb-1", TenantID: userID, CreatedBy: userID, Name: "kb-1", Type: "folder"})
+	seed(&entity.File{UserID: userID, ID: "kb-1", TenantID: userID, CreatedBy: userID, Name: "kb-1", Type: "folder"})
 	if err := testsupport.PrepareEnterprisePermissionFixture(db, userID, userID); err != nil {
 		panic(err)
 	}

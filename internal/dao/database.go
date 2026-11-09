@@ -428,9 +428,8 @@ func InitDB(ctx context.Context, migrateDB bool) error {
 		}
 
 		// Add pipeline_version_id columns and lock existing dataflow bindings to a
-		// version. Runs after the lower-target migrations so the marker advances to
-		// v1.0.0-rc3.dev6 after every lower-target migration (notably the
-		// v1.0.0-rc3.dev5 tenant default-model column drop) has already run.
+		// version after lower-target migrations (notably the v1.0.0-rc3.dev5 tenant
+		// default-model column drop).
 		if err = MigrateDSLVersionColumns(ctx, DB); err != nil {
 			return fmt.Errorf("failed to add DSL version columns: %w", err)
 		}
@@ -439,9 +438,6 @@ func InitDB(ctx context.Context, migrateDB bool) error {
 		}
 		if err = migrateConversationReferences(ctx, DB); err != nil {
 			return fmt.Errorf("failed to move references into messages: %w", err)
-		}
-		if err = migrateResourceUserIDs(ctx, DB); err != nil {
-			return fmt.Errorf("failed to backfill resource user IDs: %w", err)
 		}
 		common.Info("Database schema migrated successfully")
 	} else {

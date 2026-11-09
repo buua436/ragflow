@@ -77,10 +77,6 @@ func NewUserCanvasDAO() *UserCanvasDAO {
 
 // Create user canvas
 func (dao *UserCanvasDAO) Create(ctx context.Context, db *gorm.DB, userCanvas *entity.UserCanvas) error {
-	if userCanvas != nil && (userCanvas.TenantID == nil || strings.TrimSpace(*userCanvas.TenantID) == "") {
-		tenantID := strings.TrimSpace(userCanvas.UserID)
-		userCanvas.TenantID = &tenantID
-	}
 	return db.WithContext(ctx).Create(userCanvas).Error
 }
 
@@ -184,14 +180,11 @@ func (dao *UserCanvasDAO) GetList(ctx context.Context, db *gorm.DB, tenantID str
 	return canvases, err
 }
 
-// ListMetadataByIDs loads only the fields needed by the version catalog.
-func (dao *UserCanvasDAO) ListMetadataByIDs(ctx context.Context, db *gorm.DB, canvasIDs []string, category string) ([]entity.UserCanvas, error) {
-	if len(canvasIDs) == 0 {
-		return []entity.UserCanvas{}, nil
-	}
+// ListMetadata loads only the fields needed by the version catalog from an already-scoped query.
+func (dao *UserCanvasDAO) ListMetadata(ctx context.Context, query *gorm.DB, category string) ([]entity.UserCanvas, error) {
 	var canvases []entity.UserCanvas
-	err := db.WithContext(ctx).Select("id", "title").
-		Where("id IN ? AND canvas_category = ?", canvasIDs, category).
+	err := query.WithContext(ctx).Select("user_canvas.id", "user_canvas.title").
+		Where("user_canvas.canvas_category = ?", category).
 		Order("create_time DESC").Order("id ASC").Find(&canvases).Error
 	return canvases, err
 }
@@ -215,20 +208,16 @@ type UserCanvasListItem struct {
 	UpdateTime         *int64  `gorm:"column:update_time"`
 }
 
-// ListByIDs lists permission-filtered canvases with optional metadata filters.
-func (dao *UserCanvasDAO) ListByIDs(ctx context.Context, db *gorm.DB, canvasIDs, ownerIDs []string, page, pageSize int, terms []OrderTerm, keywords string, canvasCategories []string, canvasType string, tags []string) ([]*UserCanvasListItem, int64, error) {
-	if len(canvasIDs) == 0 {
-		return nil, 0, nil
-	}
-
-	base := db.WithContext(ctx).Model(&entity.UserCanvas{}).
+// List returns canvases from an already-scoped query with optional metadata filters.
+func (dao *UserCanvasDAO) List(ctx context.Context, query *gorm.DB, page, pageSize int, terms []OrderTerm, keywords string, canvasCategories []string, canvasType string, tags []string) ([]*UserCanvasListItem, int64, error) {
+	base := query.WithContext(ctx).
 		Select(`user_canvas.id,
 		user_canvas.avatar,
 		user_canvas.title,
 		user_canvas.description,
 		user_canvas.permission,
 		user_canvas.user_id,
-		COALESCE(NULLIF(user_canvas.tenant_id, ''), user_canvas.user_id) AS tenant_id,
+		user_canvas.tenant_id,
 		user.nickname,
 		user.avatar AS tenant_avatar,
 		user_canvas.canvas_type,
@@ -236,11 +225,7 @@ func (dao *UserCanvasDAO) ListByIDs(ctx context.Context, db *gorm.DB, canvasIDs,
 		user_canvas.tags,
 		user_canvas.create_time,
 		user_canvas.update_time`).
-		Joins("LEFT JOIN user ON user_canvas.user_id = user.id").
-		Where("user_canvas.id IN ?", canvasIDs)
-	if len(ownerIDs) > 0 {
-		base = base.Where("user_canvas.user_id IN ?", ownerIDs)
-	}
+		Joins("LEFT JOIN user ON user_canvas.user_id = user.id")
 
 	if len(canvasCategories) > 0 {
 		base = base.Where("user_canvas.canvas_category IN ?", canvasCategories)
@@ -254,7 +239,8 @@ func (dao *UserCanvasDAO) ListByIDs(ctx context.Context, db *gorm.DB, canvasIDs,
 		like := "%" + keywords + "%"
 		base = base.Where("user_canvas.title LIKE ? OR user_canvas.tags LIKE ?", like, like)
 	}
-	base = applyUserCanvasTagFilter(ctx, db, base, tags)
+	filterDB := query.WithContext(ctx).Session(&gorm.Session{NewDB: true})
+	base = applyUserCanvasTagFilter(ctx, filterDB, base, tags)
 
 	var total int64
 	if err := base.Count(&total).Error; err != nil {
@@ -267,14 +253,14 @@ func (dao *UserCanvasDAO) ListByIDs(ctx context.Context, db *gorm.DB, canvasIDs,
 	// against userCanvasOrderableColumns (a closed allowlist) and
 	// defaults to "create_time" on miss. The string spliced into
 	// Order() is always one of a fixed set of qualified column names.
-	query := base.Order(order)
+	listQuery := base.Order(order)
 
 	if page > 0 && pageSize > 0 {
-		query = query.Offset((page - 1) * pageSize).Limit(pageSize)
+		listQuery = listQuery.Offset((page - 1) * pageSize).Limit(pageSize)
 	}
 
 	var canvases []*UserCanvasListItem
-	if err := query.Scan(&canvases).Error; err != nil {
+	if err := listQuery.Scan(&canvases).Error; err != nil {
 		return nil, 0, err
 	}
 	return canvases, total, nil
@@ -295,15 +281,10 @@ type CategoryFilterItem struct {
 	Count int64  `gorm:"column:count"`
 }
 
-// GetOwnerFilterByCanvasIDs aggregates permission-filtered canvases by owner.
-// A non-empty canvasCategory scopes the aggregation to that category.
-func (dao *UserCanvasDAO) GetOwnerFilterByCanvasIDs(ctx context.Context, db *gorm.DB, canvasIDs []string, canvasCategory string) ([]*OwnerFilterItem, error) {
-	if len(canvasIDs) == 0 {
-		return nil, nil
-	}
+// GetOwnerFilter aggregates an already-scoped canvas query by owner. A non-empty canvasCategory narrows the aggregation.
+func (dao *UserCanvasDAO) GetOwnerFilter(ctx context.Context, query *gorm.DB, canvasCategory string) ([]*OwnerFilterItem, error) {
 	var items []*OwnerFilterItem
-	q := db.WithContext(ctx).Model(&entity.UserCanvas{}).
-		Where("user_canvas.id IN ?", canvasIDs)
+	q := query.WithContext(ctx)
 	if canvasCategory != "" {
 		q = q.Where("user_canvas.canvas_category = ?", canvasCategory)
 	}
@@ -315,29 +296,20 @@ func (dao *UserCanvasDAO) GetOwnerFilterByCanvasIDs(ctx context.Context, db *gor
 	return items, err
 }
 
-// GetCategoryFilterByCanvasIDs aggregates permission-filtered canvases by category.
-func (dao *UserCanvasDAO) GetCategoryFilterByCanvasIDs(ctx context.Context, db *gorm.DB, canvasIDs []string) ([]*CategoryFilterItem, error) {
-	if len(canvasIDs) == 0 {
-		return nil, nil
-	}
+// GetCategoryFilter aggregates an already-scoped canvas query by category.
+func (dao *UserCanvasDAO) GetCategoryFilter(ctx context.Context, query *gorm.DB) ([]*CategoryFilterItem, error) {
 	var items []*CategoryFilterItem
-	err := db.WithContext(ctx).Model(&entity.UserCanvas{}).
-		Where("user_canvas.id IN ?", canvasIDs).
+	err := query.WithContext(ctx).
 		Select("user_canvas.canvas_category AS id, COUNT(user_canvas.id) AS count").
 		Group("user_canvas.canvas_category").
 		Scan(&items).Error
 	return items, err
 }
 
-// ListTagsByCanvasIDs returns tag usage counts across permission-filtered canvases.
-func (dao *UserCanvasDAO) ListTagsByCanvasIDs(ctx context.Context, db *gorm.DB, canvasIDs []string, canvasCategory string) (map[string]int, error) {
-	if len(canvasIDs) == 0 {
-		return map[string]int{}, nil
-	}
-
-	query := db.WithContext(ctx).Model(&entity.UserCanvas{}).
-		Select("user_canvas.tags").
-		Where("user_canvas.id IN ?", canvasIDs)
+// ListTags returns tag usage counts across an already-scoped canvas query.
+func (dao *UserCanvasDAO) ListTags(ctx context.Context, query *gorm.DB, canvasCategory string) (map[string]int, error) {
+	query = query.WithContext(ctx).
+		Select("user_canvas.tags")
 
 	if canvasCategory != "" {
 		query = query.Where("user_canvas.canvas_category = ?", canvasCategory)

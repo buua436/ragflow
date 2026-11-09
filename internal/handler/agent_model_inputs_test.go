@@ -54,6 +54,7 @@ func setupModelInputDebug(t *testing.T, endpoint string) (*AgentHandler, *entity
 				},
 			}},
 		}},
+		TenantID: sptr("u-1"),
 	}
 	if err := db.Create(canvas).Error; err != nil {
 		t.Fatal(err)

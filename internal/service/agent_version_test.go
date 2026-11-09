@@ -32,7 +32,8 @@ func TestApplyVersionDraftSave(t *testing.T) {
 			setupAgentSessionServiceTest(t)
 			current := entity.UserCanvas{
 				ID: "canvas-1", UserID: "user-1", Release: true,
-				DSL: entity.JSONMap{"components": map[string]interface{}{}, "revision": "current"},
+				DSL:      entity.JSONMap{"components": map[string]interface{}{}, "revision": "current"},
+				TenantID: sptr("user-1"),
 			}
 			if err := dao.DB.Create(&current).Error; err != nil {
 				t.Fatal(err)

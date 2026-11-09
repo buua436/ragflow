@@ -23,6 +23,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 
 	"ragflow/internal/service"
 
@@ -107,14 +108,16 @@ func currentAPIKeyOwner(c *gin.Context) (common.ErrorCode, error) {
 		return common.CodeServerError, errors.New("Invalid user data")
 	}
 
-	tenantID := c.GetString("tenant_id")
+	tenantID := permission.TenantIDFromContext(c.Request.Context())
 	if tenantID == "" {
-		// Community Edition keeps the single-tenant user ID as its scope.
-		tenantID = user.ID
+		return common.CodeForbidden, permission.ErrTenantContextMissing
 	}
-	membership, err := dao.NewUserTenantDAO().FilterByUserIDAndTenantID(c.Request.Context(), dao.DB, user.ID, tenantID)
-	if err != nil || membership.Role != "owner" {
-		return common.CodeForbidden, errors.New("Only the tenant owner can manage API keys")
+	ctx := permission.WithIdentity(c.Request.Context(), user.ID, tenantID)
+	if err := permission.NewDatabaseChecker(dao.DB).CheckTenant(ctx, tenantID, permission.TenantOwner); err != nil {
+		if errors.Is(err, permission.ErrMembershipNotFound) || errors.Is(err, permission.ErrPermissionDenied) {
+			return common.CodeForbidden, permission.ErrPermissionDenied
+		}
+		return common.CodeServerError, err
 	}
 	return common.CodeSuccess, nil
 }

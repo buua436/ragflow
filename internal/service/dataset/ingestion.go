@@ -250,10 +250,11 @@ func (d *DatasetService) ListSyncLogs(ctx context.Context, datasetID string, pag
 		return nil, common.CodeServerError, fmt.Errorf("list dataset connectors for sync logs: %w", err)
 	}
 	checker := permission.NewDatabaseChecker(dao.DB)
-	taskIDs := make([]string, 0)
+	var taskScope permission.QueryScope
+	hasTaskScope := false
 	for _, connector := range connectors {
 		connectorRef := permission.ResourceRef{Kind: permission.ResourceKindConnector, ID: connector.ID}
-		scope, scopeErr := checker.Scope(ctx, permission.ScopeQuery{
+		scope, scopeErr := checker.QueryScope(ctx, permission.ScopeQuery{
 			Kind:      permission.ResourceKindSyncTask,
 			Parent:    connectorRef,
 			Operation: permission.OperationRead,
@@ -269,11 +270,15 @@ func (d *DatasetService) ListSyncLogs(ctx context.Context, datasetID string, pag
 			code, permissionErr := permissionresponse.Normalize(scopeErr)
 			return nil, code, permissionErr
 		}
-		if scope.Mode == permission.ScopeIDs {
-			taskIDs = append(taskIDs, scope.ResourceIDs...)
+		if hasTaskScope {
+			taskScope = taskScope.Or(scope)
+		} else {
+			taskScope = scope
+			hasTaskScope = true
 		}
 	}
-	logs, total, err := d.connectorDAO.ListLogsByTaskIDs(ctx, dao.DB, taskIDs, datasetID, (page-1)*pageSize, pageSize)
+	taskQuery := taskScope.Apply(dao.DB.WithContext(ctx).Model(&entity.SyncLogs{}))
+	logs, total, err := d.connectorDAO.ListLogs(ctx, taskQuery, datasetID, (page-1)*pageSize, pageSize)
 	if err != nil {
 		return nil, common.CodeServerError, fmt.Errorf("list dataset connector sync logs: %w", err)
 	}

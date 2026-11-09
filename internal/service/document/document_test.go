@@ -655,7 +655,7 @@ func sptr(s string) *string { return &s }
 func insertTestKB(t *testing.T, id, tenantID string, docNum, tokenNum, chunkNum int64) {
 	t.Helper()
 	ensureTestTenantOwner(t, "user-1", tenantID)
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "user-1",
 		ID:         id,
 		TenantID:   tenantID,
 		Name:       "test-kb",
@@ -748,7 +748,7 @@ func assertKBDocNum(t *testing.T, kbID string, want int64) {
 
 func insertTestDoc(t *testing.T, id, kbID string, tokenNum, chunkNum int64) {
 	t.Helper()
-	doc := &entity.Document{
+	doc := &entity.Document{UserID: "user-1",
 		ID:           id,
 		KbID:         kbID,
 		ParserID:     "naive",
@@ -833,7 +833,7 @@ func insertTestFile2Document(t *testing.T, id, fileID, docID string) {
 func insertTestFile(t *testing.T, id, parentID, name string, location *string) {
 	t.Helper()
 	srcType := string(entity.FileSourceKnowledgebase)
-	f := &entity.File{
+	f := &entity.File{UserID: "user-1",
 		ID:         id,
 		ParentID:   parentID,
 		TenantID:   "tenant-1",
@@ -1197,7 +1197,7 @@ func TestContentHashHex_MatchesPythonXXH128(t *testing.T) {
 }
 
 func TestSyncDocumentUpsertRemovesStagedBlobWhenInsertFails(t *testing.T) {
-	ctx := t.Context()
+	ctx := permission.WithIdentity(t.Context(), "tenant-1", "tenant-1")
 	db := setupServiceTestDB(t)
 	pushServiceDB(t, db)
 
@@ -1211,7 +1211,7 @@ func TestSyncDocumentUpsertRemovesStagedBlobWhenInsertFails(t *testing.T) {
 	_, err := svc.Upsert(ctx, service.DocumentUpsertInput{
 		TaskContext: service.SyncTaskContext{
 			Connector: entity.Connector{UserID: "tenant-1", TenantID: "tenant-1"},
-			Knowledgebase: entity.Knowledgebase{
+			Knowledgebase: entity.Knowledgebase{UserID: "tenant-1",
 				ID:           "missing-kb",
 				TenantID:     "tenant-1",
 				Name:         "Missing KB",
@@ -1244,7 +1244,7 @@ func TestSyncDocumentUpsertWithNilDatasetParserConfig(t *testing.T) {
 	insertUserTenantForAccessCheck(t, "user-1", "tenant-1")
 	ctx := documentTestContext(t.Context())
 
-	kb := entity.Knowledgebase{
+	kb := entity.Knowledgebase{UserID: "user-1",
 		ID: "kb-sync-nil-config", TenantID: "tenant-1", Name: "Sync KB", ParserID: "naive", CreatedBy: "user-1",
 	}
 	if err := db.Create(&kb).Error; err != nil {
@@ -1264,7 +1264,7 @@ func TestSyncDocumentUpsertWithNilDatasetParserConfig(t *testing.T) {
 
 	result, err := testDocumentService(t).Upsert(ctx, service.DocumentUpsertInput{
 		TaskContext: service.SyncTaskContext{
-			Connector:     entity.Connector{UserID: "tenant-1", TenantID: "tenant-1"},
+			Connector:     entity.Connector{UserID: "user-1", TenantID: "tenant-1"},
 			Knowledgebase: kb,
 		},
 		SourceType: "github",
@@ -1290,6 +1290,7 @@ func TestSyncDocumentUpsertWithNilDatasetParserConfig(t *testing.T) {
 
 func TestSyncDocumentUpsertRemovesStagedBlobWhenUpdateFails(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	ctx = permission.WithIdentity(ctx, "tenant-1", "tenant-1")
 	db := setupServiceTestDB(t)
 	pushServiceDB(t, db)
 
@@ -1305,7 +1306,7 @@ func TestSyncDocumentUpsertRemovesStagedBlobWhenUpdateFails(t *testing.T) {
 	}
 	oldName := "old.txt"
 	oldHash := "old-hash"
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "tenant-1",
 		ID:           "doc-sync-update",
 		KbID:         "kb-sync",
 		ParserID:     "naive",
@@ -1327,7 +1328,7 @@ func TestSyncDocumentUpsertRemovesStagedBlobWhenUpdateFails(t *testing.T) {
 	_, err := svc.Upsert(ctx, service.DocumentUpsertInput{
 		TaskContext: service.SyncTaskContext{
 			Connector: entity.Connector{UserID: "tenant-1", TenantID: "tenant-1"},
-			Knowledgebase: entity.Knowledgebase{
+			Knowledgebase: entity.Knowledgebase{UserID: "tenant-1",
 				ID:           "kb-sync",
 				TenantID:     "tenant-1",
 				Name:         "Sync KB",
@@ -1374,7 +1375,7 @@ func TestUploadLocalDocuments_MirrorsPythonCoreFields(t *testing.T) {
 	pipelineID := "pipe-1"
 	ensureTestTenantOwner(t, "user-1", "tenant-1")
 	valid := string(entity.StatusValid)
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "user-1",
 		ID:         "kb-upload",
 		TenantID:   "tenant-1",
 		CreatedBy:  "user-1",
@@ -1401,7 +1402,7 @@ func TestUploadLocalDocuments_MirrorsPythonCoreFields(t *testing.T) {
 		t.Fatalf("insert existing doc: %v", err)
 	}
 
-	ctx := permission.WithIdentity(t.Context(), "user-1", "")
+	ctx := permission.WithIdentity(t.Context(), "user-1", "tenant-1")
 	svc := testDocumentService(t)
 	fh := makeTestFileHeader(t, "file", "deck.pptx", []byte("abc"))
 	got, errs := svc.UploadLocalDocuments(ctx, kb, []*multipart.FileHeader{fh}, "nested/path", map[string]interface{}{
@@ -1454,7 +1455,7 @@ func TestUploadLocalDocumentsKeepsStorageKeyWithinByteLimit(t *testing.T) {
 	pipelineID := "pipe-long-name"
 	ensureTestTenantOwner(t, "user-1", "tenant-1")
 	valid := string(entity.StatusValid)
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "user-1",
 		ID:           "kb-long-name",
 		TenantID:     "tenant-1",
 		CreatedBy:    "user-1",
@@ -1468,7 +1469,7 @@ func TestUploadLocalDocumentsKeepsStorageKeyWithinByteLimit(t *testing.T) {
 		t.Fatalf("insert kb: %v", err)
 	}
 
-	ctx := permission.WithIdentity(t.Context(), "user-1", "")
+	ctx := permission.WithIdentity(t.Context(), "user-1", "tenant-1")
 	svc := testDocumentService(t)
 	filename := strings.Repeat("界", 100) + ".pdf"
 	fh := makeTestFileHeader(t, "file", filename, []byte("%PDF-1.7"))
@@ -1507,7 +1508,7 @@ func TestUploadEmptyDocument_CreatesVirtualDocumentAndFileLink(t *testing.T) {
 	pipelineID := "pipe-2"
 	ensureTestTenantOwner(t, "user-1", "tenant-1")
 	valid := string(entity.StatusValid)
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "user-1",
 		ID:         "kb-empty",
 		TenantID:   "tenant-1",
 		CreatedBy:  "user-1",
@@ -1523,7 +1524,7 @@ func TestUploadEmptyDocument_CreatesVirtualDocumentAndFileLink(t *testing.T) {
 		t.Fatalf("insert kb: %v", err)
 	}
 
-	ctx := permission.WithIdentity(t.Context(), "user-1", "")
+	ctx := permission.WithIdentity(t.Context(), "user-1", "tenant-1")
 	svc := testDocumentService(t)
 	got, code, err := svc.UploadEmptyDocument(ctx, kb, "draft.md")
 	if err != nil {
@@ -3041,7 +3042,7 @@ func TestGetDocumentPreview_AccessControl(t *testing.T) {
 
 	// A private (ME) dataset stays owner-only even for tenant members: the
 	// same rule the chunk list applies via KnowledgebaseDAO.Accessible.
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID: "kb-prev-me", TenantID: "tenant-1", Name: "private-kb", EmbdID: "embd-1",
 		CreatedBy: "user-1", Permission: string(entity.TenantPermissionMe),
 		DocNum: 1, Status: sptr(string(entity.StatusValid)),
@@ -3152,7 +3153,7 @@ func TestUpdateDatasetDocumentRejectsNonOwner(t *testing.T) {
 	db := setupServiceTestDB(t)
 	pushServiceDB(t, db)
 	ensureTestTenantOwner(t, "user-1", "tenant-1")
-	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "user-2"); err != nil {
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "user-1", "user-2"); err != nil {
 		t.Fatalf("prepare non-owner permission fixture: %v", err)
 	}
 	insertTestKB(t, "kb-1", "tenant-1", 1, 0, 0)
@@ -4690,7 +4691,7 @@ func TestUpdateDatasetDocumentEnabledUpdatesStatus(t *testing.T) {
 
 func insertNamedTestDoc(t *testing.T, id, kbID, name string, tokenNum, chunkNum int64) {
 	t.Helper()
-	doc := &entity.Document{
+	doc := &entity.Document{UserID: "user-1",
 		ID:           id,
 		KbID:         kbID,
 		ParserID:     "naive",
@@ -4914,7 +4915,7 @@ func TestGetThumbnails_AlignsWithPythonFormatting(t *testing.T) {
 	base64Thumb := "data:image/png;base64,AAAA"
 	fileThumb := "thumb.png"
 	otherThumb := "secret.png"
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "user-1",
 		ID:           "doc-file",
 		KbID:         "kb-1",
 		Thumbnail:    &fileThumb,
@@ -4927,7 +4928,7 @@ func TestGetThumbnails_AlignsWithPythonFormatting(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("seed file thumbnail doc: %v", err)
 	}
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "user-1",
 		ID:           "doc-base64",
 		KbID:         "kb-2",
 		Thumbnail:    &base64Thumb,
@@ -4940,7 +4941,7 @@ func TestGetThumbnails_AlignsWithPythonFormatting(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("seed base64 thumbnail doc: %v", err)
 	}
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "user-other",
 		ID:           "doc-other",
 		KbID:         "kb-other",
 		Thumbnail:    &otherThumb,
@@ -4984,7 +4985,7 @@ func TestGetDocumentImageRejectsUnindexedObjectBeforeStorage(t *testing.T) {
 
 	kbID := strings.Repeat("a", 32)
 	status := string(entity.StatusValid)
-	if err := db.Create(&entity.Knowledgebase{ID: kbID, TenantID: "user-1", Name: "kb", EmbdID: "embd", Status: &status}).Error; err != nil {
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-1", ID: kbID, TenantID: "user-1", Name: "kb", EmbdID: "embd", Status: &status}).Error; err != nil {
 		t.Fatal(err)
 	}
 	engine := &imageOwnershipEngine{result: &types.SearchResult{}}
@@ -5013,10 +5014,10 @@ func TestGetDocumentImageForDocumentAllowsIndexedSharedBucketImage(t *testing.T)
 	kbID := strings.Repeat("b", 32)
 	status := string(entity.StatusValid)
 	ensureTestTenantOwner(t, "user-1", "user-1")
-	if err := db.Create(&entity.Knowledgebase{ID: kbID, TenantID: "user-1", Name: "kb", EmbdID: "embd", Status: &status}).Error; err != nil {
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-1", ID: kbID, TenantID: "user-1", Name: "kb", EmbdID: "embd", Status: &status}).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&entity.Document{ID: "doc-1", KbID: kbID, CreatedBy: "user-1", ParserConfig: entity.JSONMap{}}).Error; err != nil {
+	if err := db.Create(&entity.Document{UserID: "user-1", ID: "doc-1", KbID: kbID, CreatedBy: "user-1", ParserConfig: entity.JSONMap{}}).Error; err != nil {
 		t.Fatal(err)
 	}
 	imageID := "imagetemps-page-1.png"
@@ -5047,7 +5048,7 @@ func TestGetDocumentThumbnailAuthorizesBeforeStorage(t *testing.T) {
 	pushServiceDB(t, db)
 	insertTestKB(t, "kb-thumb", "owner-1", 0, 0, 0)
 	thumbnail := "thumbnail.png"
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "user-1",
 		ID: "doc-thumb", KbID: "kb-thumb", Thumbnail: &thumbnail,
 		ParserID: "naive", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "user-1",
 	}).Error; err != nil {
@@ -5507,7 +5508,7 @@ func TestFileDeleteRemovesLinkedDocument(t *testing.T) {
 	// insertTestFile creates a knowledgebase-source file, which DeleteFiles skips.
 	// We need a local-source file so the deletion path is exercised.
 	loc := "doc.pdf"
-	testFile := &entity.File{
+	testFile := &entity.File{UserID: "user-1",
 		ID: "file-1", ParentID: "kb-1", TenantID: "tenant-1", CreatedBy: "user-1",
 		Name: "test.pdf", Location: &loc, SourceType: "", Type: "pdf",
 	}

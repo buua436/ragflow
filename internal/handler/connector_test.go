@@ -160,7 +160,7 @@ func TestConnectorHandlerGetConnector(t *testing.T) {
 			name:        "success",
 			connectorID: "connector-1",
 			service: fakeConnectorService{
-				connector: &entity.Connector{ID: "connector-1", TenantID: "tenant-1", Name: "REST source"},
+				connector: &entity.Connector{UserID: "tenant-1", ID: "connector-1", TenantID: "tenant-1", Name: "REST source"},
 			},
 			wantCode: common.CodeSuccess,
 			wantData: map[string]interface{}{

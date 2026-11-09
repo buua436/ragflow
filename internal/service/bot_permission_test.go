@@ -33,7 +33,7 @@ func TestBotServiceChatbotEndpointsUseChatPermissions(t *testing.T) {
 
 	status := string(entity.StatusValid)
 	name := "shared bot"
-	if err := db.Create(&entity.Chat{
+	if err := db.Create(&entity.Chat{UserID: "owner-1",
 		ID:           "chat-1",
 		TenantID:     "owner-1",
 		Name:         &name,

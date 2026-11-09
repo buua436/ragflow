@@ -141,6 +141,7 @@ func TestExecute_DebugViaEntry_HonorsPagesCap_Integration(t *testing.T) {
 		Permission:     "me",
 		CanvasCategory: "agent_canvas",
 		DSL:            canvasDSL,
+		TenantID:       strPtr(tenantID),
 	}).Error; err != nil {
 		t.Fatalf("create user agent: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestExecute_DebugViaEntry_HonorsPagesCap_Integration(t *testing.T) {
 				Type:         "pdf",
 				ParserConfig: parserConfig,
 			},
-			KB: entity.Knowledgebase{
+			KB: entity.Knowledgebase{UserID: tenantID,
 				ID:       "",
 				TenantID: tenantID,
 				EmbdID:   "embd-1",

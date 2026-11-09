@@ -19,6 +19,7 @@ package permission
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 type userIDContextKey struct{}
@@ -219,17 +220,16 @@ func (a Access) Allows(operation Operation) bool {
 	return false
 }
 
-// ScopeMode distinguishes an empty scope from an explicit resource-ID scope.
-type ScopeMode string
+type scopeMode uint8
 
 const (
-	ScopeNone ScopeMode = "none"
-	ScopeIDs  ScopeMode = "ids"
+	scopeNone scopeMode = iota
+	scopeIDs
 )
 
-// Scope is a permission-filtered candidate set for list and retrieval queries.
-type Scope struct {
-	Mode        ScopeMode
+// resourceScope is the internal ID-based fallback used to build QueryScope.
+type resourceScope struct {
+	Mode        scopeMode
 	TenantID    string
 	Kind        ResourceKind
 	Parent      ResourceRef
@@ -241,12 +241,16 @@ type Scope struct {
 type ScopeQuery struct {
 	// TenantID optionally selects a tenant boundary for the query. It does not
 	// change the authenticated identity carried by the context.
-	TenantID  string
-	Kind      ResourceKind
-	Parent    ResourceRef
-	Operation Operation
-	Entry     *ResourceRef
-	EntryOp   Operation
+	TenantID string
+	// TenantIDs and OwnerUserIDs are caller-supplied list filters. They can only
+	// narrow the authorization scope returned by QueryScope.
+	TenantIDs    []string
+	OwnerUserIDs []string
+	Kind         ResourceKind
+	Parent       ResourceRef
+	Operation    Operation
+	Entry        *ResourceRef
+	EntryOp      Operation
 }
 
 // Source loads normalized permission facts. GetResources must return the
@@ -266,7 +270,7 @@ type policy interface {
 	CheckResource(context.Context, ResourceRef, Operation) error
 	CheckDependency(context.Context, ResourceRef, ResourceRef, Operation, Operation) error
 	ResolveAccess(context.Context, ResourceRef) (Access, error)
-	Scope(context.Context, ScopeQuery) (Scope, error)
+	scope(context.Context, ScopeQuery) (resourceScope, error)
 	FilterResources(context.Context, []ResourceRef, Operation) ([]ResourceRef, error)
 }
 
@@ -349,12 +353,11 @@ func (c *Checker) ResolveAccess(ctx context.Context, resource ResourceRef) (Acce
 	return c.policy.ResolveAccess(ctx, resource)
 }
 
-// Scope returns the explicitly authorized IDs for a resource query.
-func (c *Checker) Scope(ctx context.Context, query ScopeQuery) (Scope, error) {
+func (c *Checker) scope(ctx context.Context, query ScopeQuery) (resourceScope, error) {
 	if c == nil || c.policy == nil {
-		return Scope{}, ErrSourceUnavailable
+		return resourceScope{}, ErrSourceUnavailable
 	}
-	return c.policy.Scope(ctx, query)
+	return c.policy.scope(ctx, query)
 }
 
 // QueryScope returns a database-applied authorization predicate for a resource
@@ -365,21 +368,37 @@ func (c *Checker) QueryScope(ctx context.Context, query ScopeQuery) (QueryScope,
 	if c == nil || c.policy == nil {
 		return QueryScope{}, ErrSourceUnavailable
 	}
+	contextTenantID := strings.TrimSpace(TenantIDFromContext(ctx))
+	tenantID := strings.TrimSpace(query.TenantID)
+	if tenantID == "" {
+		tenantID = contextTenantID
+	}
+	if contextTenantID != "" && tenantID != contextTenantID {
+		return QueryScope{}, ErrIdentityMismatch
+	}
+	query.TenantID = tenantID
+	if contextTenantID == "" && tenantID != "" {
+		ctx = WithTenantID(ctx, tenantID)
+	}
+	filters, err := queryFilterScope(query)
+	if err != nil {
+		return QueryScope{}, err
+	}
 	if queryPolicy, ok := c.policy.(queryScopePolicy); ok {
 		queryScope, supported, err := queryPolicy.QueryScope(ctx, query)
 		if err != nil {
 			return QueryScope{}, err
 		}
 		if supported {
-			return queryScope, nil
+			return queryScope.and(filters), nil
 		}
 	}
 
-	scope, err := c.policy.Scope(ctx, query)
+	scope, err := c.policy.scope(ctx, query)
 	if err != nil {
 		return QueryScope{}, err
 	}
-	return queryScopeForIDs(query.Kind, scope.ResourceIDs), nil
+	return queryScopeForIDs(query.Kind, scope.ResourceIDs).and(filters), nil
 }
 
 // FilterResources returns only candidate resources that allow operation.

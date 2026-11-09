@@ -39,9 +39,9 @@ func TestMetadataPushdownSearchesAllTenantIndices(t *testing.T) {
 	}
 	status := string(entity.StatusValid)
 	kbs := []entity.Knowledgebase{
-		{ID: "kb-a", TenantID: "a", Status: &status},
-		{ID: "kb-b", TenantID: "a", Status: &status},
-		{ID: "kb-c", TenantID: "b", Status: &status},
+		{UserID: "a", ID: "kb-a", TenantID: "a", Status: &status},
+		{UserID: "a", ID: "kb-b", TenantID: "a", Status: &status},
+		{UserID: "b", ID: "kb-c", TenantID: "b", Status: &status},
 	}
 	if err := db.Create(&kbs).Error; err != nil {
 		t.Fatal(err)

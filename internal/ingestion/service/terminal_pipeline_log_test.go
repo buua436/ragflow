@@ -14,7 +14,7 @@ func TestRecordTerminalPipelineLogPreservesRunIdentity(t *testing.T) {
 	defer cleanup()
 
 	status := string(entity.StatusValid)
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID: "kb-1", TenantID: "tenant-1", Name: "kb-1", EmbdID: "embd-1",
 		CreatedBy: "user-1", Permission: string(entity.TenantPermissionMe), Status: &status,
 	}).Error; err != nil {

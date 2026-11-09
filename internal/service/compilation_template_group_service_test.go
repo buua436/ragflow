@@ -28,6 +28,7 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
 	"ragflow/internal/permission"
+	"ragflow/internal/permission/testsupport"
 )
 
 // setupCompilationGroupTestDB migrates the minimal schema for the group
@@ -46,8 +47,18 @@ func setupCompilationGroupTestDB(t *testing.T) *gorm.DB {
 		&entity.CompilationTemplateGroup{},
 		&entity.CompilationTemplate{},
 		&entity.Tenant{},
+		&entity.UserTenant{},
 	); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
+	}
+	status := string(entity.StatusValid)
+	if err := db.Create(&entity.UserTenant{
+		ID: "owner-tenant-1", UserID: "tenant-1", TenantID: "tenant-1", Role: string(permission.RoleOwner), Status: &status,
+	}).Error; err != nil {
+		t.Fatalf("seed tenant owner: %v", err)
+	}
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "tenant-1"); err != nil {
+		t.Fatalf("prepare permission fixture: %v", err)
 	}
 	pushServiceDB(t, db)
 	return db

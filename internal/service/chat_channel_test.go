@@ -43,7 +43,7 @@ func createServiceTestDialog(t *testing.T, db *gorm.DB, id, tenantID, name strin
 
 	dialogName := name
 	status := string(entity.StatusValid)
-	dialog := &entity.Chat{
+	dialog := &entity.Chat{UserID: tenantID,
 		ID:           id,
 		TenantID:     tenantID,
 		Name:         &dialogName,
@@ -124,7 +124,7 @@ func TestChatChannelServiceCreateAndList(t *testing.T) {
 
 func TestChatChannelServiceGetChatChannelAllowsJoinedTenant(t *testing.T) {
 	db := setupChatChannelServiceTestDB(t)
-	createServiceTestChannel(t, db, &entity.ChatChannel{
+	createServiceTestChannel(t, db, &entity.ChatChannel{UserID: "tenant-1",
 		ID:       "cc-1",
 		TenantID: "tenant-1",
 		Name:     "bot-a",
@@ -150,10 +150,10 @@ func TestChatChannelServiceGetChatChannelAllowsJoinedTenant(t *testing.T) {
 
 func TestChatChannelServiceListUsesPermissionScope(t *testing.T) {
 	db := setupChatChannelServiceTestDB(t)
-	createServiceTestChannel(t, db, &entity.ChatChannel{
+	createServiceTestChannel(t, db, &entity.ChatChannel{UserID: "tenant-1",
 		ID: "channel-team", TenantID: "tenant-1", Name: "team", Channel: "wecom", Config: entity.JSONMap{}, Status: 1,
 	})
-	createServiceTestChannel(t, db, &entity.ChatChannel{
+	createServiceTestChannel(t, db, &entity.ChatChannel{UserID: "tenant-2",
 		ID: "channel-other", TenantID: "tenant-2", Name: "other", Channel: "wecom", Config: entity.JSONMap{}, Status: 1,
 	})
 	createServiceTestMembership(t, db, "user-2", "tenant-1")
@@ -174,7 +174,7 @@ func TestChatChannelServiceUpdateChatChannelSuccess(t *testing.T) {
 	createServiceTestDialog(t, db, "dialog-1", "tenant-1", "Assistant A")
 	createServiceTestDialog(t, db, "dialog-2", "tenant-1", "Assistant B")
 	chatID := "dialog-1"
-	createServiceTestChannel(t, db, &entity.ChatChannel{
+	createServiceTestChannel(t, db, &entity.ChatChannel{UserID: "tenant-1",
 		ID:       "cc-1",
 		TenantID: "tenant-1",
 		Name:     "bot-a",
@@ -224,7 +224,7 @@ func TestChatChannelServiceCreateRejectsOverlongName(t *testing.T) {
 
 func TestChatChannelServiceUpdateRejectsOverlongName(t *testing.T) {
 	db := setupChatChannelServiceTestDB(t)
-	createServiceTestChannel(t, db, &entity.ChatChannel{
+	createServiceTestChannel(t, db, &entity.ChatChannel{UserID: "tenant-1",
 		ID:       "cc-overlong",
 		TenantID: "tenant-1",
 		Name:     "bot-a",
@@ -249,7 +249,7 @@ func TestChatChannelServiceUpdateRejectsOverlongName(t *testing.T) {
 func TestChatChannelServiceUpdateChatChannelRejectsCrossTenantDialog(t *testing.T) {
 	db := setupChatChannelServiceTestDB(t)
 	createServiceTestDialog(t, db, "dialog-2", "tenant-2", "Assistant B")
-	createServiceTestChannel(t, db, &entity.ChatChannel{
+	createServiceTestChannel(t, db, &entity.ChatChannel{UserID: "tenant-1",
 		ID:       "cc-1",
 		TenantID: "tenant-1",
 		Name:     "bot-a",
@@ -273,7 +273,7 @@ func TestChatChannelServiceUpdateChatChannelRejectsCrossTenantDialog(t *testing.
 func TestChatChannelServiceUpdateChatChannelRequiresChannelOwnerAccess(t *testing.T) {
 	db := setupChatChannelServiceTestDB(t)
 	createServiceTestDialog(t, db, "dialog-2", "tenant-2", "Assistant B")
-	createServiceTestChannel(t, db, &entity.ChatChannel{
+	createServiceTestChannel(t, db, &entity.ChatChannel{UserID: "tenant-1",
 		ID:       "cc-1",
 		TenantID: "tenant-1",
 		Name:     "bot-a",
@@ -281,13 +281,16 @@ func TestChatChannelServiceUpdateChatChannelRequiresChannelOwnerAccess(t *testin
 		Config:   entity.JSONMap{"token": "old"},
 		Status:   1,
 	})
-	createServiceTestMembership(t, db, "user-1", "tenant-1")
-	createServiceTestMembership(t, db, "user-1", "tenant-2")
+	createServiceTestMembership(t, db, "tenant-1", "tenant-1")
 
-	_, code, err := NewChatChannelService().UpdateChatChannel(serviceTestContext(t, "user-1", "tenant-1", "tenant-1"), "cc-1", map[string]interface{}{
+	ctx := serviceTestContext(t, "tenant-1", "tenant-1")
+	if err := permission.NewDatabaseChecker(db).GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindChatChannel, ID: "cc-1"}); err != nil {
+		t.Fatalf("grant channel owner: %v", err)
+	}
+	_, code, err := NewChatChannelService().UpdateChatChannel(ctx, "cc-1", map[string]interface{}{
 		"chat_id": "dialog-2",
 	})
-	if code != common.CodeNotFound || !errors.Is(err, permission.ErrPermissionDenied) {
+	if code != common.CodeNotFound || !errors.Is(err, permission.ErrResourceNotFound) {
 		t.Fatalf("UpdateChatChannel() = (%d, %v), want hidden denial because channel owner cannot use Chat", code, err)
 	}
 }
@@ -298,7 +301,7 @@ func TestChatChannelServiceDeleteChatChannel(t *testing.T) {
 		t.Fatalf("create non-owner user: %v", err)
 	}
 	createServiceTestMembership(t, db, "user-2", "tenant-2")
-	createServiceTestChannel(t, db, &entity.ChatChannel{
+	createServiceTestChannel(t, db, &entity.ChatChannel{UserID: "tenant-1",
 		ID:       "cc-1",
 		TenantID: "tenant-1",
 		Name:     "bot-a",

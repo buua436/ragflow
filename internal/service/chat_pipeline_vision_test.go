@@ -8,6 +8,8 @@ import (
 
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
+	"ragflow/internal/permission/testsupport"
 )
 
 // setupChatPipelineVisionTestDB seeds an in-memory model-provider scope with
@@ -71,6 +73,9 @@ func seedChatPipelineVisionTenant(t *testing.T, db *gorm.DB, defaultLLMID string
 	if err := db.Model(&entity.UserTenant{}).Where("id = ?", "user-tenant-1").Update("llm_id", defaultLLMID).Error; err != nil {
 		t.Fatalf("failed to configure owner default model: %v", err)
 	}
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "user-1"); err != nil {
+		t.Fatalf("prepare vision model permission fixture: %v", err)
+	}
 }
 
 // A text-only chat model (glm-4-flash, enrolled as chat only) must resolve
@@ -81,7 +86,7 @@ func TestGetLLMModelConfig_TextOnlyModelResolvesChat(t *testing.T) {
 	seedChatPipelineVisionTenant(t, db, "glm-4-flash@ZHIPU-AI")
 
 	svc := NewChatPipelineService()
-	cfg, _, _, _, err := svc.getLLMModelConfig(t.Context(), &entity.Chat{
+	cfg, _, _, _, err := svc.getLLMModelConfig(permission.WithIdentity(t.Context(), "user-1", "tenant-1"), &entity.Chat{UserID: "user-1",
 		TenantID: "tenant-1",
 		LLMID:    "glm-4-flash@ZHIPU-AI",
 	})
@@ -100,7 +105,7 @@ func TestGetLLMModelConfig_VisionModelResolvesImage2Text(t *testing.T) {
 	seedChatPipelineVisionTenant(t, db, "glm-4v@ZHIPU-AI")
 
 	svc := NewChatPipelineService()
-	cfg, _, _, _, err := svc.getLLMModelConfig(t.Context(), &entity.Chat{
+	cfg, _, _, _, err := svc.getLLMModelConfig(permission.WithIdentity(t.Context(), "user-1", "tenant-1"), &entity.Chat{UserID: "user-1",
 		TenantID: "tenant-1",
 		LLMID:    "glm-4v@ZHIPU-AI",
 	})
@@ -120,7 +125,7 @@ func TestGetLLMModelConfig_CombinedChatAndImage2TextResolvesImage2Text(t *testin
 	seedChatPipelineVisionTenant(t, db, "glm-4.6v-Flash@ZHIPU-AI")
 
 	svc := NewChatPipelineService()
-	cfg, _, _, _, err := svc.getLLMModelConfig(t.Context(), &entity.Chat{
+	cfg, _, _, _, err := svc.getLLMModelConfig(permission.WithIdentity(t.Context(), "user-1", "tenant-1"), &entity.Chat{UserID: "user-1",
 		TenantID: "tenant-1",
 		LLMID:    "glm-4.6v-Flash@ZHIPU-AI",
 	})
@@ -139,7 +144,7 @@ func TestGetLLMModelConfig_TenantDefaultTextOnlyResolvesChat(t *testing.T) {
 	seedChatPipelineVisionTenant(t, db, "glm-4-flash@ZHIPU-AI")
 
 	svc := NewChatPipelineService()
-	cfg, _, _, _, err := svc.getLLMModelConfig(t.Context(), &entity.Chat{
+	cfg, _, _, _, err := svc.getLLMModelConfig(permission.WithIdentity(t.Context(), "user-1", "tenant-1"), &entity.Chat{UserID: "user-1",
 		TenantID: "tenant-1",
 	})
 	if err != nil {
@@ -157,7 +162,7 @@ func TestGetLLMModelConfig_TenantDefaultVisionResolvesImage2Text(t *testing.T) {
 	seedChatPipelineVisionTenant(t, db, "glm-4v@ZHIPU-AI")
 
 	svc := NewChatPipelineService()
-	cfg, _, _, _, err := svc.getLLMModelConfig(t.Context(), &entity.Chat{
+	cfg, _, _, _, err := svc.getLLMModelConfig(permission.WithIdentity(t.Context(), "user-1", "tenant-1"), &entity.Chat{UserID: "user-1",
 		TenantID: "tenant-1",
 	})
 	if err != nil {

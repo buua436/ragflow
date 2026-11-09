@@ -252,7 +252,7 @@ func TestTagVocabularyFromTagFileID_RejectsForeignTenantFile(t *testing.T) {
 
 	csv := []byte("\"some content\",\"finance,urgent\"\n\"other content\",\"finance\"")
 	loc := location
-	if err := db.Create(&entity.File{
+	if err := db.Create(&entity.File{UserID: ownerTenant,
 		ID:        fileID,
 		ParentID:  bucket,
 		TenantID:  ownerTenant,

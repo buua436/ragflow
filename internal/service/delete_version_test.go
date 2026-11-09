@@ -37,6 +37,7 @@ func seedVersionedDataflowCanvas(t *testing.T, db *gorm.DB, userID, canvasID, ve
 		CanvasCategory: "dataflow_canvas",
 		Permission:     "me",
 		DSL:            entity.JSONMap{"graph": "legacy"},
+		TenantID:       sptr(userID),
 	}
 	if err := db.Create(canvas).Error; err != nil {
 		t.Fatalf("seed canvas: %v", err)
@@ -49,7 +50,7 @@ func seedVersionedDataflowCanvas(t *testing.T, db *gorm.DB, userID, canvasID, ve
 	if err := db.Create(ver).Error; err != nil {
 		t.Fatalf("seed version: %v", err)
 	}
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: userID,
 		ID:                "kb-" + canvasID,
 		TenantID:          "tenant-1",
 		Name:              "kb-" + canvasID,
@@ -114,6 +115,7 @@ func TestDeleteVersion_UnreferencedVersionDeleted(t *testing.T) {
 		CanvasCategory: "dataflow_canvas",
 		Permission:     "me",
 		DSL:            entity.JSONMap{"graph": "legacy"},
+		TenantID:       sptr(userID),
 	}
 	if err := db.Create(canvas).Error; err != nil {
 		t.Fatalf("seed canvas: %v", err)

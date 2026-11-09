@@ -515,7 +515,7 @@ func TestBatchUpdateDocumentStatusRetainsPartialFailure(t *testing.T) {
 	}
 	insertTestDoc(t, "owner-doc", "kb-1", 0, 0)
 	insertTestDoc(t, "member-doc", "kb-1", 0, 0)
-	if err := db.Model(&entity.Document{}).Where("id = ?", "member-doc").Update("created_by", "member").Error; err != nil {
+	if err := db.Model(&entity.Document{}).Where("id = ?", "member-doc").Update("user_id", "member").Error; err != nil {
 		t.Fatalf("make one document member-owned: %v", err)
 	}
 	valid := string(entity.StatusValid)

@@ -36,6 +36,7 @@ func seedGapCanvas(t *testing.T, db *gorm.DB, canvasID string) {
 		CanvasCategory: "dataflow_canvas",
 		Permission:     "me",
 		DSL:            entity.JSONMap{"graph": "legacy"},
+		TenantID:       sptr("tenant-1"),
 	}
 	if err := db.Create(canvas).Error; err != nil {
 		t.Fatalf("seed canvas: %v", err)
@@ -68,7 +69,7 @@ func seedGapVersion(t *testing.T, db *gorm.DB, canvasID, versionID, marker strin
 // seedBoundKBWithVersion creates a knowledgebase already bound to a canvas + version.
 func seedBoundKBWithVersion(t *testing.T, db *gorm.DB, kbID, canvasID, versionID string) {
 	t.Helper()
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "tenant-1",
 		ID:                kbID,
 		TenantID:          "tenant-1",
 		CreatedBy:         "tenant-1",

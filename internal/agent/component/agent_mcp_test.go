@@ -84,7 +84,7 @@ func TestAgentMCPModelDispatch(t *testing.T) {
 	pinned := utility.PinnedHTTPClient
 	utility.PinnedHTTPClient = func(string, string, time.Duration) *http.Client { return mcp.Client() }
 	t.Cleanup(func() { utility.PinnedHTTPClient = pinned })
-	if err := db.Create(&entity.MCPServer{ID: "mcp", TenantID: "tenant", Name: "route server", URL: mcp.URL, ServerType: mcpclient.TransportStreamableHTTP, Headers: entity.JSONMap{"Authorization": "Bearer ${authorization_token}"}, Variables: entity.JSONMap{"authorization_token": authToken}}).Error; err != nil {
+	if err := db.Create(&entity.MCPServer{UserID: "tenant", ID: "mcp", TenantID: "tenant", Name: "route server", URL: mcp.URL, ServerType: mcpclient.TransportStreamableHTTP, Headers: entity.JSONMap{"Authorization": "Bearer ${authorization_token}"}, Variables: entity.JSONMap{"authorization_token": authToken}}).Error; err != nil {
 		t.Fatal(err)
 	}
 	addAgentMCPPermissionFixtures(t, db)
@@ -182,7 +182,7 @@ func TestAgentMCPToolNamesDoNotCollide(t *testing.T) {
 	}
 	pushComponentDB(t, db)
 	for _, id := range []string{"first", "second"} {
-		if err := db.Create(&entity.MCPServer{ID: id, TenantID: "tenant", Name: id, URL: "https://example.com/mcp", ServerType: mcpclient.TransportStreamableHTTP}).Error; err != nil {
+		if err := db.Create(&entity.MCPServer{UserID: "tenant", ID: id, TenantID: "tenant", Name: id, URL: "https://example.com/mcp", ServerType: mcpclient.TransportStreamableHTTP}).Error; err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -224,8 +224,9 @@ func addAgentMCPPermissionFixtures(t *testing.T, db *gorm.DB) {
 	}).Error; err != nil {
 		t.Fatalf("create MCP owner membership: %v", err)
 	}
+	tenantID := "tenant"
 	if err := db.Create(&entity.UserCanvas{
-		ID: "canvas", UserID: "tenant", Permission: string(entity.TenantPermissionMe),
+		ID: "canvas", UserID: "tenant", TenantID: &tenantID, Permission: string(entity.TenantPermissionMe),
 	}).Error; err != nil {
 		t.Fatalf("create canvas permission fixture: %v", err)
 	}

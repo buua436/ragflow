@@ -67,7 +67,7 @@ func seedLegacyTenantModelMaxTokens(t *testing.T, db *gorm.DB, maxTokens int64) 
 	modelName := "custom-model"
 	modelType := "chat"
 	apiKey := `{"api_key":"secret","is_tools":true}`
-	if err := db.Create(&entity.TenantModelProvider{
+	if err := db.Create(&entity.TenantModelProvider{UserID: "tenant-1",
 		ID:           "provider-1",
 		ProviderName: "Ollama",
 		TenantID:     "tenant-1",

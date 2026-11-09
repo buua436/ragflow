@@ -26,7 +26,14 @@ import (
 type skillSpaceAuthorization struct {
 	ID       string
 	TenantID string
+	UserID   string
 	FolderID string
+}
+
+type mcpServerAuthorization struct {
+	ID       string
+	TenantID string
+	UserID   string
 }
 
 type folderAuthorization struct {
@@ -34,14 +41,14 @@ type folderAuthorization struct {
 	Type     string
 }
 
-func (s *databaseSource) loadMCPServerTenants(ctx context.Context, ids []string) (map[string]string, error) {
-	tenantIDsByServer := make(map[string]string)
+func (s *databaseSource) loadMCPServers(ctx context.Context, ids []string) (map[string]mcpServerAuthorization, error) {
+	serversByID := make(map[string]mcpServerAuthorization)
 	ids = uniqueStringValues(ids)
 	if len(ids) == 0 {
-		return tenantIDsByServer, nil
+		return serversByID, nil
 	}
 	query := s.db.WithContext(ctx).Model(&entity.MCPServer{}).
-		Select("id", "tenant_id").
+		Select("id", "tenant_id", "user_id").
 		Where("id IN ?", ids)
 	if s.lockRows {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})
@@ -49,14 +56,15 @@ func (s *databaseSource) loadMCPServerTenants(ctx context.Context, ids []string)
 	var servers []struct {
 		ID       string
 		TenantID string
+		UserID   string
 	}
 	if err := query.Scan(&servers).Error; err != nil {
 		return nil, err
 	}
 	for _, server := range servers {
-		tenantIDsByServer[server.ID] = server.TenantID
+		serversByID[server.ID] = mcpServerAuthorization{ID: server.ID, TenantID: server.TenantID, UserID: server.UserID}
 	}
-	return tenantIDsByServer, nil
+	return serversByID, nil
 }
 
 func (s *databaseSource) loadChatChannels(ctx context.Context, ids []string) (map[string]*entity.ChatChannel, error) {
@@ -86,7 +94,7 @@ func (s *databaseSource) loadSkillSpaces(ctx context.Context, ids []string) (map
 		return spacesByID, nil
 	}
 	query := s.db.WithContext(ctx).Model(&entity.SkillSpace{}).
-		Select("id", "tenant_id", "folder_id").
+		Select("id", "tenant_id", "user_id", "folder_id").
 		Where("id IN ? AND status IN ?", ids, []string{entity.SpaceStatusActive, entity.SpaceStatusDeleting})
 	if s.lockRows {
 		query = query.Clauses(clause.Locking{Strength: "UPDATE"})

@@ -28,7 +28,9 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/engine/kvrocks"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 	"ragflow/internal/server"
+	fileservice "ragflow/internal/service/file"
 	"regexp"
 	"strconv"
 	"strings"
@@ -144,6 +146,7 @@ func (s *UserService) Register(ctx context.Context, req *RegisterRequest) (*enti
 	}
 
 	userID := common.GenerateToken()
+	tenantID := common.GenerateToken()
 	accessToken := common.GenerateToken()
 	status := "1"
 	loginChannel := "password"
@@ -203,7 +206,7 @@ func (s *UserService) Register(ctx context.Context, req *RegisterRequest) (*enti
 	}
 
 	tenant := &entity.Tenant{
-		ID:        userID,
+		ID:        tenantID,
 		Name:      &tenantName,
 		ParserIDs: "naive:General,qa:Q&A,manual:Manual,table:Table,paper:Research Paper,book:Book,laws:Laws,presentation:Presentation,picture:Picture,one:One,audio:Audio,email:Email,tag:Tag",
 		Status:    &status,
@@ -212,7 +215,7 @@ func (s *UserService) Register(ctx context.Context, req *RegisterRequest) (*enti
 	userTenant := &entity.UserTenant{
 		ID:        userTenantID,
 		UserID:    userID,
-		TenantID:  userID,
+		TenantID:  tenantID,
 		Role:      "owner",
 		InvitedBy: userID,
 		Status:    &status,
@@ -224,20 +227,6 @@ func (s *UserService) Register(ctx context.Context, req *RegisterRequest) (*enti
 		TTSID:     &ttsID,
 		OCRID:     &ocrID,
 	}
-	fileID := common.GenerateToken()
-	file__ := ""
-	rootFile := &entity.File{
-		ID:        fileID,
-		ParentID:  fileID,
-		UserID:    userID,
-		TenantID:  userID,
-		CreatedBy: userID,
-		Name:      "/",
-		Type:      "folder",
-		Location:  &file__,
-		Size:      0,
-	}
-
 	db := dao.GetDB()
 	tenantDAO := dao.NewTenantDAO()
 	if err = db.Transaction(func(tx *gorm.DB) error {
@@ -256,7 +245,8 @@ func (s *UserService) Register(ctx context.Context, req *RegisterRequest) (*enti
 			return fmt.Errorf("failed to create user tenant relation: %w", err)
 		}
 
-		if err = tx.Create(rootFile).Error; err != nil {
+		ownerCtx := permission.WithIdentity(ctx, userID, tenantID)
+		if _, err := fileservice.GetOrCreateRootFolder(ownerCtx, tx); err != nil {
 			return fmt.Errorf("failed to create root folder: %w", err)
 		}
 		return nil

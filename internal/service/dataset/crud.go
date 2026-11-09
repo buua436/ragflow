@@ -54,7 +54,7 @@ func (d *DatasetService) CreateDataset(ctx context.Context, req *service.CreateD
 	userID := strings.TrimSpace(permission.UserIDFromContext(ctx))
 	tenantID := strings.TrimSpace(permission.TenantIDFromContext(ctx))
 	if tenantID == "" {
-		tenantID = userID
+		return nil, common.CodeUnauthorized, permission.ErrTenantContextMissing
 	}
 	if tenantID == "" || userID == "" {
 		return nil, common.CodeUnauthorized, errors.New("user id and tenant id are required")
@@ -384,7 +384,7 @@ func (d *DatasetService) DeleteDatasets(ctx context.Context, ids []string, delet
 	userID := strings.TrimSpace(permission.UserIDFromContext(ctx))
 	tenantID := strings.TrimSpace(permission.TenantIDFromContext(ctx))
 	if tenantID == "" {
-		tenantID = userID
+		return nil, common.CodeUnauthorized, permission.ErrTenantContextMissing
 	}
 	if userID == "" {
 		return nil, common.CodeUnauthorized, errors.New("user id is required")
@@ -642,6 +642,18 @@ func (d *DatasetService) ListDatasets(ctx context.Context, id, name string, page
 			operation = permission.OperationUse
 			entry = &permission.ResourceRef{Kind: permission.ResourceKindCanvas, ID: canvasID}
 		}
+		scopeQuery := permission.ScopeQuery{
+			Kind: permission.ResourceKindDataset, Operation: operation, OwnerUserIDs: filteredOwnerIDs,
+		}
+		if entry != nil {
+			scopeQuery.Entry = entry
+			scopeQuery.EntryOp = permission.OperationRun
+		}
+		scope, err := checker.QueryScope(ctx, scopeQuery)
+		if err != nil {
+			return err
+		}
+		listQuery := scope.Apply(tx.WithContext(ctx).Model(&entity.Knowledgebase{}))
 		checkAccess := func(datasetID string) error {
 			dependency := permission.ResourceRef{Kind: permission.ResourceKindDataset, ID: datasetID}
 			if entry == nil {
@@ -649,8 +661,6 @@ func (d *DatasetService) ListDatasets(ctx context.Context, id, name string, page
 			}
 			return checker.CheckDependency(ctx, *entry, dependency, permission.OperationRun, operation)
 		}
-		listQuery := tx.WithContext(ctx).Model(&entity.Knowledgebase{})
-		var resourceIDs []string
 
 		switch {
 		case id != "":
@@ -660,7 +670,7 @@ func (d *DatasetService) ListDatasets(ctx context.Context, id, name string, page
 			}
 			listQuery = listQuery.Where("knowledgebase.id = ?", id)
 		case len(ids) > 0:
-			resourceIDs = make([]string, 0, len(ids))
+			resourceIDs := make([]string, 0, len(ids))
 			for _, datasetID := range ids {
 				checkErr := checkAccess(datasetID)
 				if checkErr == nil {
@@ -680,19 +690,8 @@ func (d *DatasetService) ListDatasets(ctx context.Context, id, name string, page
 			} else {
 				listQuery = listQuery.Where("knowledgebase.id IN ?", resourceIDs)
 			}
-		default:
-			scopeQuery := permission.ScopeQuery{Kind: permission.ResourceKindDataset, Operation: operation}
-			if entry != nil {
-				scopeQuery.Entry = entry
-				scopeQuery.EntryOp = permission.OperationRun
-			}
-			scope, checkErr := checker.QueryScope(ctx, scopeQuery)
-			if checkErr != nil {
-				return checkErr
-			}
-			listQuery = scope.Apply(listQuery)
 		}
-		listed, count, err := d.kbDAO.ListByQuery(ctx, listQuery, filteredOwnerIDs, page, pageSize, terms, keywords, parserID, name)
+		listed, count, err := d.kbDAO.ListByQuery(ctx, listQuery, page, pageSize, terms, keywords, parserID, name)
 		if err != nil {
 			return err
 		}
@@ -760,14 +759,12 @@ func (d *DatasetService) ListDatasetFilters(ctx context.Context, canvasID string
 			query.Entry = &permission.ResourceRef{Kind: permission.ResourceKindCanvas, ID: canvasID}
 			query.EntryOp = permission.OperationRun
 		}
-		scope, err := permission.NewDatabaseChecker(tx).Scope(ctx, query)
+		scope, err := permission.NewDatabaseChecker(tx).QueryScope(ctx, query)
 		if err != nil {
 			return err
 		}
-		if scope.Mode == permission.ScopeNone {
-			return nil
-		}
-		owners, err = d.kbDAO.GetOwnerFilterByResourceIDs(ctx, tx, scope.ResourceIDs)
+		dbQuery := scope.Apply(tx.WithContext(ctx).Model(&entity.Knowledgebase{}))
+		owners, err = d.kbDAO.GetOwnerFilter(ctx, dbQuery)
 		return err
 	})
 	if err != nil {

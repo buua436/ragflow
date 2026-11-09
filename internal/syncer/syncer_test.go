@@ -264,7 +264,7 @@ func insertTaskContext(t *testing.T, db *gorm.DB, connectorID, kbID, taskID, tas
 		t.Fatalf("count connector: %v", err)
 	}
 	if existingConnector == 0 {
-		if err := db.Create(&entity.Connector{
+		if err := db.Create(&entity.Connector{UserID: "tenant-1",
 			ID:        connectorID,
 			TenantID:  "tenant-1",
 			Name:      connectorID,
@@ -284,7 +284,7 @@ func insertTaskContext(t *testing.T, db *gorm.DB, connectorID, kbID, taskID, tas
 			t.Fatalf("insert connector: %v", err)
 		}
 	}
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "tenant-1",
 		ID:           kbID,
 		TenantID:     "tenant-1",
 		Name:         kbID,
@@ -315,7 +315,7 @@ func insertTaskContext(t *testing.T, db *gorm.DB, connectorID, kbID, taskID, tas
 
 func insertKnowledgebaseMapping(t *testing.T, db *gorm.DB, connectorID, kbID string) {
 	t.Helper()
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "tenant-1",
 		ID:           kbID,
 		TenantID:     "tenant-1",
 		Name:         kbID,

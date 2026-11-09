@@ -124,7 +124,7 @@ func TestChatChannelHandlerCreateSuccess(t *testing.T) {
 				gotChannel = channelType
 				gotConfig = config
 				gotChatID = chatID
-				return &entity.ChatChannel{
+				return &entity.ChatChannel{UserID: permission.TenantIDFromContext(ctx),
 					ID:       "cc-1",
 					TenantID: permission.TenantIDFromContext(ctx),
 					Name:     name,
@@ -318,7 +318,7 @@ func TestChatChannelHandlerUpdateChatChannelUnwrapsData(t *testing.T) {
 		chatChannelService: fakeChatChannelService{
 			updateFn: func(ctx context.Context, channelID string, req map[string]interface{}) (*entity.ChatChannel, common.ErrorCode, error) {
 				gotReq = req
-				return &entity.ChatChannel{ID: channelID, TenantID: permission.TenantIDFromContext(ctx), Name: "new-name"}, common.CodeSuccess, nil
+				return &entity.ChatChannel{UserID: permission.TenantIDFromContext(ctx), ID: channelID, TenantID: permission.TenantIDFromContext(ctx), Name: "new-name"}, common.CodeSuccess, nil
 			},
 		},
 	}

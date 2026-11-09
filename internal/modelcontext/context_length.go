@@ -27,6 +27,7 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
 	"ragflow/internal/entity/models"
+	"ragflow/internal/permission"
 )
 
 // ResolveModelContentLength returns the chat model's effective context window
@@ -99,7 +100,7 @@ func lookupTenantModel(ctx context.Context, db *gorm.DB, tenantID, modelRef, pur
 		if tenantID == "" {
 			return nil
 		}
-		owner, err := dao.NewUserTenantDAO().GetOwnerByTenantID(ctx, db, tenantID)
+		owner, err := permission.TenantOwnerMembership(ctx, db, tenantID)
 		if err != nil {
 			return nil
 		}

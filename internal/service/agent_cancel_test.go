@@ -146,7 +146,9 @@ func TestRunAgentInitializationFailureReleasesActiveSession(t *testing.T) {
 	if err := testDB.AutoMigrate(&entity.UserCanvas{}, &entity.UserCanvasVersion{}); err != nil {
 		t.Fatalf("migrate agent tables: %v", err)
 	}
-	if err := testDB.Create(&entity.UserCanvas{ID: "agent-1", UserID: "user-a"}).Error; err != nil {
+	if err := testDB.Create(&entity.UserCanvas{ID: "agent-1", UserID: "user-a",
+		TenantID: sptr("user-a"),
+	}).Error; err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
 	tracker, mr := newAgentCancelTracker(t)

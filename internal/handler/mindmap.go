@@ -53,11 +53,15 @@ func runMindMap(ctx context.Context, config mindMapRunConfig) (mindMapNode, erro
 		return mindMapNode{}, permission.ErrUnauthenticated
 	}
 	modelTenantID := config.ModelTenantID
+	contextTenantID := permission.TenantIDFromContext(ctx)
+	if contextTenantID == "" {
+		return mindMapNode{}, permission.ErrTenantContextMissing
+	}
 	if modelTenantID == "" {
-		modelTenantID = permission.TenantIDFromContext(ctx)
-		if modelTenantID == "" {
-			modelTenantID = permission.UserIDFromContext(ctx)
-		}
+		modelTenantID = contextTenantID
+	}
+	if modelTenantID != contextTenantID {
+		return mindMapNode{}, permission.ErrIdentityMismatch
 	}
 	retrievalReq := mindMapRetrievalRequest(config.Question, config.KbIDs, config.SearchID, config.SearchConfig)
 	ranks, err := config.ChunkSvc.RetrievalTest(ctx, retrievalReq)

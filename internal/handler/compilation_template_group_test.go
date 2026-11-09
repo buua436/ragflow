@@ -31,6 +31,7 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
 	"ragflow/internal/permission"
+	"ragflow/internal/permission/testsupport"
 	"ragflow/internal/service"
 )
 
@@ -50,8 +51,18 @@ func setupGroupHandlerDB(t *testing.T) *gorm.DB {
 		&entity.CompilationTemplateGroup{},
 		&entity.CompilationTemplate{},
 		&entity.Tenant{},
+		&entity.UserTenant{},
 	); err != nil {
 		t.Fatalf("failed to migrate: %v", err)
+	}
+	status := string(entity.StatusValid)
+	if err := db.Create(&entity.UserTenant{
+		ID: "owner-user-1", UserID: "user-1", TenantID: "user-1", Role: string(permission.RoleOwner), Status: &status,
+	}).Error; err != nil {
+		t.Fatalf("seed tenant owner: %v", err)
+	}
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "user-1", "user-1"); err != nil {
+		t.Fatalf("prepare permission fixture: %v", err)
 	}
 	origDB := dao.DB
 	dao.DB = db

@@ -409,7 +409,7 @@ func TestResolveDocumentParser_Priority(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			kb := &entity.Knowledgebase{
+			kb := &entity.Knowledgebase{UserID: "user-1",
 				ID:           "kb-" + tc.name,
 				TenantID:     "tenant-1",
 				Name:         "kb",
@@ -475,7 +475,7 @@ func TestUploadLocalDocuments_RoutesFileTypesToDedicatedParsers(t *testing.T) {
 			"built_in_metadata": []any{},
 		},
 	}
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "user-1",
 		ID:           "kb-route",
 		TenantID:     "tenant-1",
 		Name:         "kb-route",
@@ -487,7 +487,7 @@ func TestUploadLocalDocuments_RoutesFileTypesToDedicatedParsers(t *testing.T) {
 		t.Fatalf("insert kb: %v", err)
 	}
 
-	ctx := permission.WithIdentity(t.Context(), "user-1", "")
+	ctx := permission.WithIdentity(t.Context(), "user-1", "tenant-1")
 	svc := testDocumentService(t)
 	files := []*multipart.FileHeader{
 		makeTestFileHeader(t, "file", "photo.jpg", []byte("jpeg-bytes")),
@@ -570,10 +570,10 @@ func TestUploadLocalDocuments_FallsBackWhenSelectionLacksFamily(t *testing.T) {
 
 	seedDocumentParserTenant(t, "tenant-1", "user-1")
 
-	ctx := permission.WithIdentity(t.Context(), "user-1", "")
+	ctx := permission.WithIdentity(t.Context(), "user-1", "tenant-1")
 	svc := testDocumentService(t)
 
-	presentationKB := &entity.Knowledgebase{
+	presentationKB := &entity.Knowledgebase{UserID: "user-1",
 		ID:           "kb-presentation",
 		TenantID:     "tenant-1",
 		Name:         "kb-presentation",
@@ -601,7 +601,7 @@ func TestUploadLocalDocuments_FallsBackWhenSelectionLacksFamily(t *testing.T) {
 	parserFamilySetup(t, got[1], "slides")
 
 	canvasID := "canvas-1"
-	canvasKB := &entity.Knowledgebase{
+	canvasKB := &entity.Knowledgebase{UserID: "user-1",
 		ID:           "kb-canvas",
 		TenantID:     "tenant-1",
 		Name:         "kb-canvas",
@@ -656,7 +656,7 @@ func TestUploadLocalDocuments_SwitchesVideoToPicture(t *testing.T) {
 
 	seedDocumentParserTenant(t, "tenant-1", "user-1")
 
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "user-1",
 		ID:           "kb-video-block",
 		TenantID:     "tenant-1",
 		Name:         "kb-video-block",
@@ -668,7 +668,7 @@ func TestUploadLocalDocuments_SwitchesVideoToPicture(t *testing.T) {
 		t.Fatalf("insert kb: %v", err)
 	}
 
-	ctx := permission.WithIdentity(t.Context(), "user-1", "")
+	ctx := permission.WithIdentity(t.Context(), "user-1", "tenant-1")
 	svc := testDocumentService(t)
 	got, errs := svc.UploadLocalDocuments(ctx, kb, []*multipart.FileHeader{
 		makeTestFileHeader(t, "file", "clip.mov", []byte("mov-bytes")),
@@ -708,7 +708,7 @@ func TestInsertSyncDocument_FallsBackWhenSelectionLacksFamily(t *testing.T) {
 
 	seedDocumentParserTenant(t, "tenant-1", "user-1")
 
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "user-1",
 		ID:           "kb-sync",
 		TenantID:     "tenant-1",
 		Name:         "kb-sync",

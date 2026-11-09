@@ -201,12 +201,19 @@ func TestMigratedMinerUControlsReachRequest(t *testing.T) {
 				if err := db.AutoMigrate(&entity.UserTenant{}, &entity.TenantModelProvider{}, &entity.TenantModelInstance{}, &entity.TenantModel{}); err != nil {
 					t.Fatal(err)
 				}
+				status := string(entity.StatusValid)
+				if err := db.Create(&entity.UserTenant{
+					ID: "tenant-owner", UserID: "tenant-owner-user", TenantID: "tenant",
+					Role: "owner", Status: &status,
+				}).Error; err != nil {
+					t.Fatalf("seed tenant owner membership: %v", err)
+				}
 				extra, err := json.Marshal(map[string]string{"base_url": server.URL})
 				if err != nil {
 					t.Fatal(err)
 				}
 				for _, row := range []any{
-					&entity.TenantModelProvider{ID: "provider-mineru", UserID: "tenant", TenantID: "tenant", ProviderName: "MinerU"},
+					&entity.TenantModelProvider{ID: "provider-mineru", UserID: "tenant-owner-user", TenantID: "tenant", ProviderName: "MinerU"},
 					&entity.TenantModelInstance{ID: "instance-mineru", ProviderID: "provider-mineru", InstanceName: "default", APIKey: "synthetic-mineru-key", Status: "active", Extra: string(extra)},
 					&entity.TenantModel{ID: "model-mineru", ProviderID: "provider-mineru", InstanceID: "instance-mineru", ModelName: "MinerU-model", ModelType: int(entity.ModelTypeOCR), Status: "active"},
 				} {

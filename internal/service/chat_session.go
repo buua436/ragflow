@@ -51,13 +51,13 @@ type chatSessionStore interface {
 	Create(ctx context.Context, db *gorm.DB, conv *entity.ChatSession) error
 	UpdateByID(ctx context.Context, db *gorm.DB, id string, updates map[string]interface{}) error
 	DeleteByID(ctx context.Context, db *gorm.DB, id string) error
-	ListByResourceIDs(ctx context.Context, db *gorm.DB, chatID string, sessionIDs []string, sessionID, name, sessionUserID string, terms []dao.OrderTerm, page, pageSize int, options ...dao.ConversationHistoryOptions) ([]*entity.ChatSession, int64, error)
+	List(ctx context.Context, query *gorm.DB, sessionID, name, sessionUserID string, terms []dao.OrderTerm, page, pageSize int, options ...dao.ConversationHistoryOptions) ([]*entity.ChatSession, int64, error)
 	GetDialogByID(ctx context.Context, db *gorm.DB, chatID string) (*entity.Chat, error)
 }
 
 type chatSessionPermissionChecker interface {
-	resourceScopeChecker
-	FilterResources(context.Context, []permission.ResourceRef, permission.Operation) ([]permission.ResourceRef, error)
+	CheckResource(context.Context, permission.ResourceRef, permission.Operation) error
+	QueryScope(context.Context, permission.ScopeQuery) (permission.QueryScope, error)
 }
 
 type chatPipelineRunner interface {
@@ -134,13 +134,17 @@ type ChatSessionPayload struct {
 
 // ListChatSessions lists chat sessions for a dialog
 func (s *ChatSessionService) ListChatSessions(ctx context.Context, chatID, sessionID, name, sessionUserID string, terms []dao.OrderTerm, page, pageSize int, options ...dao.ConversationHistoryOptions) (*ListChatSessionsResponse, error) {
-	if err := s.permissionChecker.CheckResource(ctx, permission.ResourceRef{Kind: permission.ResourceKindChat, ID: chatID}, permission.OperationRead); err != nil {
+	chatRef := permission.ResourceRef{Kind: permission.ResourceKindChat, ID: chatID}
+	scope, err := s.permissionChecker.QueryScope(ctx, permission.ScopeQuery{
+		Kind: permission.ResourceKindChatSession, Parent: chatRef, Operation: permission.OperationRead,
+		Entry: &chatRef, EntryOp: permission.OperationRead,
+	})
+	if err != nil {
 		_, normalizedErr := permissionresponse.NormalizeHidden(err)
 		return nil, normalizedErr
 	}
-
-	// List chat sessions
-	sessions, total, err := s.chatSessionDAO.ListByResourceIDs(ctx, dao.DB, chatID, nil, sessionID, name, sessionUserID, terms, page, pageSize, sessionHistoryOptions(options...))
+	query := scope.Apply(dao.DB.WithContext(ctx).Model(&entity.ChatSession{})).Where("conversation.dialog_id = ?", chatID)
+	sessions, total, err := s.chatSessionDAO.List(ctx, query, sessionID, name, sessionUserID, terms, page, pageSize, sessionHistoryOptions(options...))
 	if err != nil {
 		return nil, err
 	}
@@ -148,28 +152,9 @@ func (s *ChatSessionService) ListChatSessions(ctx context.Context, chatID, sessi
 		return &ListChatSessionsResponse{Sessions: []*ChatSessionPayload{}, Total: total}, nil
 	}
 
-	checker := s.permissionChecker
-	if checker == nil {
-		checker = permission.NewDatabaseChecker(dao.DB)
-	}
-	refs := make([]permission.ResourceRef, 0, len(sessions))
+	filtered := make([]*ChatSessionPayload, 0, len(sessions))
 	for _, session := range sessions {
-		refs = append(refs, permission.ResourceRef{Kind: permission.ResourceKindChatSession, ID: session.ID})
-	}
-	accessible, err := checker.FilterResources(ctx, refs, permission.OperationRead)
-	if err != nil {
-		_, normalizedErr := permissionresponse.NormalizeHidden(err)
-		return nil, normalizedErr
-	}
-	allowedIDs := make(map[string]bool, len(accessible))
-	for _, ref := range accessible {
-		allowedIDs[ref.ID] = true
-	}
-	filtered := make([]*ChatSessionPayload, 0, len(accessible))
-	for _, session := range sessions {
-		if allowedIDs[session.ID] {
-			filtered = append(filtered, s.buildSessionPayload(session, nil, false, options...))
-		}
+		filtered = append(filtered, s.buildSessionPayload(session, nil, false, options...))
 	}
 
 	return &ListChatSessionsResponse{Sessions: filtered, Total: total}, nil
@@ -286,7 +271,7 @@ func (s *ChatSessionService) DeleteSessions(ctx context.Context, chatID string, 
 		deleteAll, _ := req["delete_all"].(bool)
 		if deleteAll {
 			chatRef := permission.ResourceRef{Kind: permission.ResourceKindChat, ID: chatID}
-			sessionScope, err := s.permissionChecker.Scope(ctx, permission.ScopeQuery{
+			sessionScope, err := s.permissionChecker.QueryScope(ctx, permission.ScopeQuery{
 				Kind:      permission.ResourceKindChatSession,
 				Parent:    chatRef,
 				Operation: permission.OperationDelete,
@@ -297,18 +282,12 @@ func (s *ChatSessionService) DeleteSessions(ctx context.Context, chatID string, 
 				code, normalizedErr := permissionresponse.NormalizeHidden(err)
 				return nil, "", code, normalizedErr
 			}
-			sessionIDs = sessionScope.ResourceIDs
-			if sessionScope.Mode == permission.ScopeNone {
-				sessionIDs = []string{}
-			}
-			if len(sessionIDs) == 0 {
-				return map[string]interface{}{}, "success", common.CodeSuccess, nil
-			}
-			sessions, _, err := s.chatSessionDAO.ListByResourceIDs(ctx, dao.DB, chatID, sessionIDs, "", "", "", []dao.OrderTerm{{Column: "create_time", Desc: true}}, 0, -1, dao.ConversationHistoryOptions{NoHistory: true})
+			query := sessionScope.Apply(dao.DB.WithContext(ctx).Model(&entity.ChatSession{})).Where("conversation.dialog_id = ?", chatID)
+			sessions, _, err := s.chatSessionDAO.List(ctx, query, "", "", "", []dao.OrderTerm{{Column: "create_time", Desc: true}}, 0, -1, dao.ConversationHistoryOptions{NoHistory: true})
 			if err != nil {
 				return nil, "", common.CodeServerError, err
 			}
-			sessionIDs = sessionIDs[:0]
+			sessionIDs = make([]string, 0, len(sessions))
 			for _, session := range sessions {
 				sessionIDs = append(sessionIDs, session.ID)
 			}

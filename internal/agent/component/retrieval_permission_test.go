@@ -24,24 +24,25 @@ func TestCheckCanvasRetrievalDependencies(t *testing.T) {
 	}
 
 	valid := string(entity.StatusValid)
-	canvas := entity.UserCanvas{ID: "canvas-1", UserID: "canvas-owner", Permission: string(entity.TenantPermissionTeam)}
-	dataset := entity.Knowledgebase{
+	canvasTenantID := "canvas-owner"
+	canvas := entity.UserCanvas{ID: "canvas-1", UserID: "canvas-owner", TenantID: &canvasTenantID, Permission: string(entity.TenantPermissionTeam)}
+	dataset := entity.Knowledgebase{UserID: "canvas-owner",
 		ID: "dataset-1", TenantID: "canvas-owner", CreatedBy: "canvas-owner",
 		Permission: string(entity.TenantPermissionTeam), Status: &valid,
 	}
-	privateDataset := entity.Knowledgebase{
+	privateDataset := entity.Knowledgebase{UserID: "other-owner",
 		ID: "private-dataset", TenantID: "canvas-owner", CreatedBy: "other-owner",
 		Permission: string(entity.TenantPermissionMe), Status: &valid,
 	}
-	sharedMemory := entity.Memory{
+	sharedMemory := entity.Memory{UserID: "canvas-owner",
 		ID: "shared-memory", Name: "Shared", TenantID: "canvas-owner",
 		Permissions: string(entity.TenantPermissionTeam),
 	}
-	callerOnlyMemory := entity.Memory{
+	callerOnlyMemory := entity.Memory{UserID: "canvas-owner",
 		ID: "caller-only-memory", Name: "Caller only", TenantID: "canvas-owner",
 		Permissions: string(entity.TenantPermissionMe),
 	}
-	ownerOnlyMemory := entity.Memory{
+	ownerOnlyMemory := entity.Memory{UserID: "canvas-owner",
 		ID: "owner-only-memory", Name: "Owner only", TenantID: "canvas-owner",
 		Permissions: string(entity.TenantPermissionMe),
 	}

@@ -24,10 +24,10 @@ func TestGetDownloadStatusAggregatesLinkedConnectorFiles(t *testing.T) {
 	pushServiceDB(t, db)
 
 	connectors := []entity.Connector{
-		{ID: "connector-checkpoint", TenantID: "tenant-1", Name: "checkpoint", Source: "rss", InputType: "poll", Config: entity.JSONMap{}, Status: dao.SyncStatusSchedule},
-		{ID: "connector-fallback", TenantID: "tenant-1", Name: "fallback", Source: "s3", InputType: "poll", Config: entity.JSONMap{}, Status: dao.SyncStatusSchedule},
-		{ID: "connector-source-fail", TenantID: "tenant-1", Name: "source-fail", Source: "notion", InputType: "poll", Config: entity.JSONMap{}, Status: dao.SyncStatusSchedule},
-		{ID: "connector-unlinked", TenantID: "tenant-1", Name: "unlinked", Source: "webdav", InputType: "poll", Config: entity.JSONMap{}, Status: dao.SyncStatusSchedule},
+		{UserID: "tenant-1", ID: "connector-checkpoint", TenantID: "tenant-1", Name: "checkpoint", Source: "rss", InputType: "poll", Config: entity.JSONMap{}, Status: dao.SyncStatusSchedule},
+		{UserID: "tenant-1", ID: "connector-fallback", TenantID: "tenant-1", Name: "fallback", Source: "s3", InputType: "poll", Config: entity.JSONMap{}, Status: dao.SyncStatusSchedule},
+		{UserID: "tenant-1", ID: "connector-source-fail", TenantID: "tenant-1", Name: "source-fail", Source: "notion", InputType: "poll", Config: entity.JSONMap{}, Status: dao.SyncStatusSchedule},
+		{UserID: "tenant-1", ID: "connector-unlinked", TenantID: "tenant-1", Name: "unlinked", Source: "webdav", InputType: "poll", Config: entity.JSONMap{}, Status: dao.SyncStatusSchedule},
 	}
 	if err := db.Create(&connectors).Error; err != nil {
 		t.Fatalf("create connectors: %v", err)
@@ -42,10 +42,10 @@ func TestGetDownloadStatusAggregatesLinkedConnectorFiles(t *testing.T) {
 	}
 
 	documents := []entity.Document{
-		{ID: "doc-rss", KbID: "dataset-1", ParserID: "naive", ParserConfig: entity.JSONMap{}, SourceType: "rss/connector-checkpoint", Type: "text", CreatedBy: "tenant-1", Name: sptr("rss.txt"), Suffix: "txt"},
-		{ID: "doc-s3", KbID: "dataset-1", ParserID: "naive", ParserConfig: entity.JSONMap{}, SourceType: "s3/connector-fallback", Type: "text", CreatedBy: "tenant-1", Name: sptr("s3.txt"), Suffix: "txt"},
-		{ID: "doc-local", KbID: "dataset-1", ParserID: "naive", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "text", CreatedBy: "tenant-1", Name: sptr("local.txt"), Suffix: "txt"},
-		{ID: "doc-unlinked", KbID: "dataset-1", ParserID: "naive", ParserConfig: entity.JSONMap{}, SourceType: "webdav/connector-unlinked", Type: "text", CreatedBy: "tenant-1", Name: sptr("unlinked.txt"), Suffix: "txt"},
+		{UserID: "tenant-1", ID: "doc-rss", KbID: "dataset-1", ParserID: "naive", ParserConfig: entity.JSONMap{}, SourceType: "rss/connector-checkpoint", Type: "text", CreatedBy: "tenant-1", Name: sptr("rss.txt"), Suffix: "txt"},
+		{UserID: "tenant-1", ID: "doc-s3", KbID: "dataset-1", ParserID: "naive", ParserConfig: entity.JSONMap{}, SourceType: "s3/connector-fallback", Type: "text", CreatedBy: "tenant-1", Name: sptr("s3.txt"), Suffix: "txt"},
+		{UserID: "tenant-1", ID: "doc-local", KbID: "dataset-1", ParserID: "naive", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "text", CreatedBy: "tenant-1", Name: sptr("local.txt"), Suffix: "txt"},
+		{UserID: "tenant-1", ID: "doc-unlinked", KbID: "dataset-1", ParserID: "naive", ParserConfig: entity.JSONMap{}, SourceType: "webdav/connector-unlinked", Type: "text", CreatedBy: "tenant-1", Name: sptr("unlinked.txt"), Suffix: "txt"},
 	}
 	if err := db.Create(&documents).Error; err != nil {
 		t.Fatalf("create documents: %v", err)

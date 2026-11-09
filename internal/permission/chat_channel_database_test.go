@@ -1,4 +1,4 @@
-//go:build !enterprise
+//go:build !ee
 
 package permission
 
@@ -24,9 +24,9 @@ func TestDatabaseCheckerScopesChatChannelsToTenantMembers(t *testing.T) {
 
 	valid := "1"
 	channels := []entity.ChatChannel{
-		{ID: "team-channel", TenantID: "tenant-a", Name: "team", Channel: "slack", Config: entity.JSONMap{}, Status: 1},
-		{ID: "inactive-channel", TenantID: "tenant-a", Name: "inactive", Channel: "slack", Config: entity.JSONMap{}, Status: 1},
-		{ID: "other-channel", TenantID: "tenant-b", Name: "other", Channel: "slack", Config: entity.JSONMap{}, Status: 1},
+		{ID: "team-channel", UserID: "tenant-owner", TenantID: "tenant-a", Name: "team", Channel: "slack", Config: entity.JSONMap{}, Status: 1},
+		{ID: "inactive-channel", UserID: "tenant-owner", TenantID: "tenant-a", Name: "inactive", Channel: "slack", Config: entity.JSONMap{}, Status: 1},
+		{ID: "other-channel", UserID: "other-owner", TenantID: "tenant-b", Name: "other", Channel: "slack", Config: entity.JSONMap{}, Status: 1},
 	}
 	if err := db.Create(&channels).Error; err != nil {
 		t.Fatalf("create chat channels: %v", err)
@@ -54,11 +54,25 @@ func TestDatabaseCheckerScopesChatChannelsToTenantMembers(t *testing.T) {
 		t.Errorf("inactive channel should remain manageable: %v", err)
 	}
 
-	scope, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: ResourceKindChatChannel, Operation: OperationRead})
+	scope, err := checker.scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: ResourceKindChatChannel, Operation: OperationRead})
 	if err != nil {
 		t.Fatalf("scope chat channels: %v", err)
 	}
-	if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != 2 {
+	if scope.Mode != scopeIDs || len(scope.ResourceIDs) != 2 {
 		t.Fatalf("chat-channel scope = %+v, want both tenant channels", scope)
+	}
+
+	queryScope, err := checker.QueryScope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{
+		Kind: ResourceKindChatChannel, Operation: OperationRead, OwnerUserIDs: []string{"tenant-owner"},
+	})
+	if err != nil {
+		t.Fatalf("query scope chat channels by resource owner: %v", err)
+	}
+	var channelIDs []string
+	if err := queryScope.Apply(db.Model(&entity.ChatChannel{})).Order("chat_channel.id").Pluck("chat_channel.id", &channelIDs).Error; err != nil {
+		t.Fatalf("query channels by resource owner: %v", err)
+	}
+	if len(channelIDs) != 2 || channelIDs[0] != "inactive-channel" || channelIDs[1] != "team-channel" {
+		t.Fatalf("owner-scoped channels = %v, want both tenant-owner channels", channelIDs)
 	}
 }

@@ -51,7 +51,7 @@ func (m *mockKBService) GetKnowledgebaseByID(ctx context.Context, kbID string) (
 	if m.getKnowledgebaseByIDFn != nil {
 		return m.getKnowledgebaseByIDFn(ctx, kbID)
 	}
-	return &entity.Knowledgebase{
+	return &entity.Knowledgebase{UserID: "tenant1",
 		ID: kbID, TenantID: "tenant1", EmbdID: "text-embedding",
 	}, nil
 }

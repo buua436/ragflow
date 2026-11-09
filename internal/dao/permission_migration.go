@@ -26,22 +26,22 @@ import (
 	"gorm.io/gorm"
 )
 
-const permissionMigrationTargetVersion = "v1.0.0-rc3.dev4"
+const permissionMigrationTargetVersion = "v1.0.0-rc3.dev5"
 
 // migratePermissions applies the permission schema migration and records its version.
 func migratePermissions(ctx context.Context, db *gorm.DB) error {
-	// Enterprise migrations have their own marker. Run this hook before checking
-	// the shared marker so a community migration cannot skip enterprise data work.
-	if err := migratePermissionDataEE(ctx, db); err != nil {
-		return fmt.Errorf("migrate enterprise permission data: %w", err)
+	if err := migrateResourceUserIDs(ctx, db); err != nil {
+		return err
 	}
-
 	version, err := GetDatabaseMigrationVersion(ctx, db)
 	if err != nil {
 		return fmt.Errorf("read database migration version: %w", err)
 	}
 	if shouldSkipMigration(version, permissionMigrationTargetVersion) {
-		return nil
+		return migratePermissionDataEE(ctx, db)
+	}
+	if err := migrateUserCanvasTenantID(ctx, db); err != nil {
+		return err
 	}
 	if err := migrateLegacyTenantInvitationStatuses(ctx, db); err != nil {
 		return err
@@ -55,11 +55,11 @@ func migratePermissions(ctx context.Context, db *gorm.DB) error {
 	if err := migrateAPITokenUserID(ctx, db); err != nil {
 		return err
 	}
-	if err := migrateUserCanvasTenantID(ctx, db); err != nil {
-		return err
-	}
 	if err := setDatabaseMigrationVersion(ctx, db, permissionMigrationTargetVersion); err != nil {
 		return fmt.Errorf("mark permission migration version: %w", err)
+	}
+	if err := migratePermissionDataEE(ctx, db); err != nil {
+		return fmt.Errorf("migrate enterprise permission data: %w", err)
 	}
 	return nil
 }
@@ -195,15 +195,51 @@ func migrateTenantModelProviderUserID(ctx context.Context, db *gorm.DB) error {
 	if !migrator.HasColumn(&entity.TenantModelProvider{}, "UserID") {
 		return fmt.Errorf("tenant_model_provider.user_id is missing after GORM migration")
 	}
+	var tenantIDs []string
 	if err := scoped.Model(&entity.TenantModelProvider{}).
-		Where("user_id IS NULL OR user_id = ''").
-		UpdateColumn("user_id", gorm.Expr("tenant_id")).Error; err != nil {
-		return fmt.Errorf("backfill tenant_model_provider.user_id from tenant_id: %w", err)
+		Distinct("tenant_id").Where("user_id IS NULL OR user_id = ''").Pluck("tenant_id", &tenantIDs).Error; err != nil {
+		return fmt.Errorf("load tenants with model providers missing owner user_id: %w", err)
+	}
+	owners, err := activeTenantOwnerUserIDs(ctx, scoped, tenantIDs)
+	if err != nil {
+		return fmt.Errorf("resolve model provider owners: %w", err)
+	}
+	for _, tenantID := range tenantIDs {
+		if err := scoped.Model(&entity.TenantModelProvider{}).
+			Where("tenant_id = ? AND (user_id IS NULL OR user_id = '')", tenantID).
+			UpdateColumn("user_id", owners[tenantID]).Error; err != nil {
+			return fmt.Errorf("backfill tenant_model_provider.user_id for tenant %s: %w", tenantID, err)
+		}
 	}
 	return nil
 }
 
-// migrateUserCanvasTenantID backfills tenant IDs for existing canvases.
+// activeTenantOwnerUserIDs resolves one persisted owner membership per tenant.
+func activeTenantOwnerUserIDs(ctx context.Context, db *gorm.DB, tenantIDs []string) (map[string]string, error) {
+	owners := make(map[string]string, len(tenantIDs))
+	if len(tenantIDs) == 0 {
+		return owners, nil
+	}
+	var memberships []entity.UserTenant
+	if err := db.WithContext(ctx).
+		Where("tenant_id IN ? AND role = ? AND status = ?", tenantIDs, "owner", string(entity.StatusValid)).
+		Find(&memberships).Error; err != nil {
+		return nil, fmt.Errorf("load active owner memberships: %w", err)
+	}
+	counts := make(map[string]int, len(tenantIDs))
+	for _, membership := range memberships {
+		counts[membership.TenantID]++
+		owners[membership.TenantID] = strings.TrimSpace(membership.UserID)
+	}
+	for _, tenantID := range tenantIDs {
+		if counts[tenantID] != 1 || owners[tenantID] == "" {
+			return nil, fmt.Errorf("tenant %q has %d active owner memberships; expected exactly one to backfill its owner user_id", tenantID, counts[tenantID])
+		}
+	}
+	return owners, nil
+}
+
+// migrateUserCanvasTenantID backfills tenant IDs from active memberships.
 func migrateUserCanvasTenantID(ctx context.Context, db *gorm.DB) error {
 	migrator := db.WithContext(ctx).Migrator()
 	if !migrator.HasTable(&entity.UserCanvas{}) {
@@ -212,8 +248,52 @@ func migrateUserCanvasTenantID(ctx context.Context, db *gorm.DB) error {
 	if !migrator.HasColumn(&entity.UserCanvas{}, "TenantID") {
 		return fmt.Errorf("user_canvas.tenant_id is missing after GORM migration")
 	}
-	if err := db.WithContext(ctx).Exec("UPDATE user_canvas SET tenant_id = user_id WHERE tenant_id IS NULL OR tenant_id = ''").Error; err != nil {
-		return fmt.Errorf("backfill user_canvas.tenant_id: %w", err)
+	var canvases []struct {
+		ID     string
+		UserID string
+	}
+	if err := db.WithContext(ctx).Model(&entity.UserCanvas{}).
+		Select("id", "user_id").Where("tenant_id IS NULL OR tenant_id = ''").Find(&canvases).Error; err != nil {
+		return fmt.Errorf("load canvases missing tenant_id: %w", err)
+	}
+	if len(canvases) == 0 {
+		return nil
+	}
+	userIDs := make([]string, 0, len(canvases))
+	for _, canvas := range canvases {
+		userIDs = append(userIDs, canvas.UserID)
+	}
+	var memberships []entity.UserTenant
+	if err := db.WithContext(ctx).Where("user_id IN ? AND status = ?", userIDs, string(entity.StatusValid)).Find(&memberships).Error; err != nil {
+		return fmt.Errorf("load active canvas owner memberships: %w", err)
+	}
+	tenantsByUser := make(map[string]map[string]struct{}, len(userIDs))
+	for _, membership := range memberships {
+		if tenantsByUser[membership.UserID] == nil {
+			tenantsByUser[membership.UserID] = make(map[string]struct{})
+		}
+		tenantsByUser[membership.UserID][membership.TenantID] = struct{}{}
+	}
+	for _, canvas := range canvases {
+		tenantIDs := tenantsByUser[canvas.UserID]
+		selectedTenantID := ""
+		// Older personal canvases used the creator ID as their tenant ID. Keep
+		// that established mapping only when the membership row confirms it.
+		if _, ok := tenantIDs[canvas.UserID]; ok {
+			selectedTenantID = canvas.UserID
+		} else if len(tenantIDs) == 1 {
+			for tenantID := range tenantIDs {
+				selectedTenantID = tenantID
+			}
+		}
+		if selectedTenantID == "" {
+			return fmt.Errorf("canvas %q owner %q has no unique tenant membership to backfill tenant_id", canvas.ID, canvas.UserID)
+		}
+		if err := db.WithContext(ctx).Model(&entity.UserCanvas{}).
+			Where("id = ? AND (tenant_id IS NULL OR tenant_id = '')", canvas.ID).
+			Update("tenant_id", selectedTenantID).Error; err != nil {
+			return fmt.Errorf("backfill user_canvas.tenant_id for canvas %s: %w", canvas.ID, err)
+		}
 	}
 	return nil
 }
@@ -227,8 +307,21 @@ func migrateAPITokenUserID(ctx context.Context, db *gorm.DB) error {
 	if !migrator.HasColumn(&entity.APIToken{}, "UserID") {
 		return fmt.Errorf("api_token.user_id is missing after GORM migration")
 	}
-	if err := db.WithContext(ctx).Exec("UPDATE api_token SET user_id = tenant_id WHERE user_id IS NULL OR user_id = ''").Error; err != nil {
-		return fmt.Errorf("backfill api_token.user_id: %w", err)
+	var tenantIDs []string
+	if err := db.WithContext(ctx).Model(&entity.APIToken{}).
+		Distinct("tenant_id").Where("user_id IS NULL OR user_id = ''").Pluck("tenant_id", &tenantIDs).Error; err != nil {
+		return fmt.Errorf("load tenants with API tokens missing owner user_id: %w", err)
+	}
+	owners, err := activeTenantOwnerUserIDs(ctx, db, tenantIDs)
+	if err != nil {
+		return fmt.Errorf("resolve API token owners: %w", err)
+	}
+	for _, tenantID := range tenantIDs {
+		if err := db.WithContext(ctx).Model(&entity.APIToken{}).
+			Where("tenant_id = ? AND (user_id IS NULL OR user_id = '')", tenantID).
+			Update("user_id", owners[tenantID]).Error; err != nil {
+			return fmt.Errorf("backfill api_token.user_id for tenant %s: %w", tenantID, err)
+		}
 	}
 	return nil
 }

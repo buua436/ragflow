@@ -42,9 +42,9 @@ var searchOrderExpressions = []string{
 func seedOrderableSearches(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	searches := []entity.Search{
-		{ID: "s-1", TenantID: "t1", Name: "zulu", CreatedBy: "t1", SearchConfig: entity.JSONMap{}, Status: stringPtr("1"), BaseModel: entity.BaseModel{CreateTime: int64Ptr(100)}},
-		{ID: "s-2", TenantID: "t1", Name: "mike", CreatedBy: "t1", SearchConfig: entity.JSONMap{}, Status: stringPtr("1"), BaseModel: entity.BaseModel{CreateTime: int64Ptr(200)}},
-		{ID: "s-3", TenantID: "t1", Name: "alpha", CreatedBy: "t1", SearchConfig: entity.JSONMap{}, Status: stringPtr("1"), BaseModel: entity.BaseModel{CreateTime: int64Ptr(300)}},
+		{UserID: "t1", ID: "s-1", TenantID: "t1", Name: "zulu", CreatedBy: "t1", SearchConfig: entity.JSONMap{}, Status: stringPtr("1"), BaseModel: entity.BaseModel{CreateTime: int64Ptr(100)}},
+		{UserID: "t1", ID: "s-2", TenantID: "t1", Name: "mike", CreatedBy: "t1", SearchConfig: entity.JSONMap{}, Status: stringPtr("1"), BaseModel: entity.BaseModel{CreateTime: int64Ptr(200)}},
+		{UserID: "t1", ID: "s-3", TenantID: "t1", Name: "alpha", CreatedBy: "t1", SearchConfig: entity.JSONMap{}, Status: stringPtr("1"), BaseModel: entity.BaseModel{CreateTime: int64Ptr(300)}},
 	}
 	for i := range searches {
 		if err := db.Create(&searches[i]).Error; err != nil {
@@ -69,10 +69,10 @@ func assertSearchOrder(t *testing.T, rows []*entity.SearchListItem, want []strin
 	}
 }
 
-// TestSearchDAOListByResourceIDsOrderByExpressionFallsBack checks that an
+// TestSearchDAOListOrderByExpressionFallsBack checks that an
 // `orderby` value that is an expression rather than an allowed column name
 // leaves the rows in the default create_time order.
-func TestSearchDAOListByResourceIDsOrderByExpressionFallsBack(t *testing.T) {
+func TestSearchDAOListOrderByExpressionFallsBack(t *testing.T) {
 	db := setupSearchDetailDAOTestDB(t)
 	pushDB(t, db)
 	seedOrderableSearches(t, db)
@@ -81,29 +81,9 @@ func TestSearchDAOListByResourceIDsOrderByExpressionFallsBack(t *testing.T) {
 
 	for _, orderby := range searchOrderExpressions {
 		t.Run(orderby, func(t *testing.T) {
-			rows, _, err := d.ListByResourceIDs(ctx, db, []string{"s-1", "s-2", "s-3"}, nil, 1, 10, []OrderTerm{{Column: orderby}}, "")
+			rows, _, err := d.List(ctx, db.Model(&entity.Search{}), 1, 10, []OrderTerm{{Column: orderby}}, "")
 			if err != nil {
-				t.Fatalf("ListByResourceIDs with orderby %q: %v", orderby, err)
-			}
-			assertSearchOrder(t, rows, []string{"s-1", "s-2", "s-3"}, orderby)
-		})
-	}
-}
-
-// TestSearchDAOListByResourceIDsWithOwnerFilterOrderByExpressionFallsBack
-// covers the same query with an owner_ids filter.
-func TestSearchDAOListByResourceIDsWithOwnerFilterOrderByExpressionFallsBack(t *testing.T) {
-	db := setupSearchDetailDAOTestDB(t)
-	pushDB(t, db)
-	seedOrderableSearches(t, db)
-	ctx := t.Context()
-	d := NewSearchDAO()
-
-	for _, orderby := range searchOrderExpressions {
-		t.Run(orderby, func(t *testing.T) {
-			rows, _, err := d.ListByResourceIDs(ctx, db, []string{"s-1", "s-2", "s-3"}, []string{"t1"}, 1, 10, []OrderTerm{{Column: orderby}}, "")
-			if err != nil {
-				t.Fatalf("ListByResourceIDs with orderby %q: %v", orderby, err)
+				t.Fatalf("List with orderby %q: %v", orderby, err)
 			}
 			assertSearchOrder(t, rows, []string{"s-1", "s-2", "s-3"}, orderby)
 		})
@@ -119,15 +99,15 @@ func TestSearchDAOListOrderByAllowedColumn(t *testing.T) {
 	ctx := t.Context()
 	d := NewSearchDAO()
 
-	rows, _, err := d.ListByResourceIDs(ctx, db, []string{"s-1", "s-2", "s-3"}, nil, 1, 10, []OrderTerm{{Column: "name"}}, "")
+	rows, _, err := d.List(ctx, db.Model(&entity.Search{}), 1, 10, []OrderTerm{{Column: "name"}}, "")
 	if err != nil {
-		t.Fatalf("ListByResourceIDs ascending by name: %v", err)
+		t.Fatalf("List ascending by name: %v", err)
 	}
 	assertSearchOrder(t, rows, []string{"s-3", "s-2", "s-1"}, "name")
 
-	rows, _, err = d.ListByResourceIDs(ctx, db, []string{"s-1", "s-2", "s-3"}, nil, 1, 10, []OrderTerm{{Column: "name", Desc: true}}, "")
+	rows, _, err = d.List(ctx, db.Model(&entity.Search{}), 1, 10, []OrderTerm{{Column: "name", Desc: true}}, "")
 	if err != nil {
-		t.Fatalf("ListByResourceIDs descending by name: %v", err)
+		t.Fatalf("List descending by name: %v", err)
 	}
 	assertSearchOrder(t, rows, []string{"s-1", "s-2", "s-3"}, "name")
 }
@@ -158,7 +138,7 @@ func seedSearchRowsWithCreateTime(t *testing.T, db *gorm.DB, tenantID string, co
 	t.Helper()
 	for i := 1; i <= count; i++ {
 		createTime := int64(i * 100)
-		search := entity.Search{
+		search := entity.Search{UserID: tenantID,
 			ID:           fmt.Sprintf("s-%d", i),
 			TenantID:     tenantID,
 			Name:         fmt.Sprintf("search-%d", i),
@@ -173,11 +153,11 @@ func seedSearchRowsWithCreateTime(t *testing.T, db *gorm.DB, tenantID string, co
 	}
 }
 
-// TestSearchDAOListByResourceIDsPaginatesInSQL checks that page/pageSize reach the
+// TestSearchDAOListPaginatesInSQL checks that page/pageSize reach the
 // query as LIMIT/OFFSET while total keeps reporting the full COUNT(*).
 // SearchService.ListSearches returns that total as the response's total field
 // and no longer slices the returned rows itself.
-func TestSearchDAOListByResourceIDsPaginatesInSQL(t *testing.T) {
+func TestSearchDAOListPaginatesInSQL(t *testing.T) {
 	db := setupSearchDetailDAOTestDB(t)
 	pushDB(t, db)
 	seedSearchRowsWithCreateTime(t, db, "t1", 5)
@@ -199,9 +179,9 @@ func TestSearchDAOListByResourceIDsPaginatesInSQL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rows, total, err := d.ListByResourceIDs(ctx, db, []string{"s-1", "s-2", "s-3", "s-4", "s-5"}, nil, tt.page, tt.pageSize, terms, "")
+			rows, total, err := d.List(ctx, db.Model(&entity.Search{}), tt.page, tt.pageSize, terms, "")
 			if err != nil {
-				t.Fatalf("ListByResourceIDs(page=%d, pageSize=%d): %v", tt.page, tt.pageSize, err)
+				t.Fatalf("List(page=%d, pageSize=%d): %v", tt.page, tt.pageSize, err)
 			}
 			if total != 5 {
 				t.Fatalf("total = %d, want 5: total must count every matching row, not just the page", total)
@@ -211,10 +191,10 @@ func TestSearchDAOListByResourceIDsPaginatesInSQL(t *testing.T) {
 	}
 }
 
-// TestSearchDAOListByResourceIDsKeepsJoinedOwnerColumnsWhenPaginated guards the
+// TestSearchDAOListKeepsJoinedOwnerColumnsWhenPaginated guards the
 // COUNT followed by the paged Scan: the second statement must still select the
 // joined user columns instead of inheriting count(*) from the first one.
-func TestSearchDAOListByResourceIDsKeepsJoinedOwnerColumnsWhenPaginated(t *testing.T) {
+func TestSearchDAOListKeepsJoinedOwnerColumnsWhenPaginated(t *testing.T) {
 	db := setupSearchDetailDAOTestDB(t)
 	pushDB(t, db)
 	seedSearchRowsWithCreateTime(t, db, "t1", 3)
@@ -224,9 +204,9 @@ func TestSearchDAOListByResourceIDsKeepsJoinedOwnerColumnsWhenPaginated(t *testi
 		t.Fatalf("failed to create user: %v", err)
 	}
 
-	rows, total, err := NewSearchDAO().ListByResourceIDs(ctx, db, []string{"s-1", "s-2", "s-3"}, nil, 1, 2, []OrderTerm{{Column: "create_time", Desc: true}}, "")
+	rows, total, err := NewSearchDAO().List(ctx, db.Model(&entity.Search{}), 1, 2, []OrderTerm{{Column: "create_time", Desc: true}}, "")
 	if err != nil {
-		t.Fatalf("ListByResourceIDs: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if total != 3 {
 		t.Fatalf("total = %d, want 3", total)
@@ -242,41 +222,6 @@ func TestSearchDAOListByResourceIDsKeepsJoinedOwnerColumnsWhenPaginated(t *testi
 			t.Fatalf("row %d nickname = %v, want owner of t1: the paged scan dropped the joined owner column", i, row.Nickname)
 		}
 	}
-}
-
-// TestSearchDAOListByResourceIDsKeepsOwnerFilter pins the owner_ids filter: a
-// search owned by the requesting user is still excluded when its tenant_id is
-// not among ownerIDs, even when it is included in the authorized resource IDs.
-func TestSearchDAOListByResourceIDsKeepsOwnerFilter(t *testing.T) {
-	db := setupSearchDetailDAOTestDB(t)
-	pushDB(t, db)
-	ctx := t.Context()
-	d := NewSearchDAO()
-
-	for _, tenantID := range []string{"t1", "u-self"} {
-		createTime := int64(100)
-		search := entity.Search{
-			ID:           "search-" + tenantID,
-			TenantID:     tenantID,
-			Name:         "search " + tenantID,
-			CreatedBy:    tenantID,
-			SearchConfig: entity.JSONMap{},
-			Status:       stringPtr("1"),
-			BaseModel:    entity.BaseModel{CreateTime: &createTime},
-		}
-		if err := db.Create(&search).Error; err != nil {
-			t.Fatalf("failed to create search %s: %v", search.ID, err)
-		}
-	}
-
-	rows, total, err := d.ListByResourceIDs(ctx, db, []string{"search-t1", "search-u-self"}, []string{"t1"}, 0, 0, nil, "")
-	if err != nil {
-		t.Fatalf("ListByResourceIDs: %v", err)
-	}
-	if total != 1 {
-		t.Fatalf("total = %d, want 1: only the t1 search has a tenant_id in ownerIDs", total)
-	}
-	assertSearchIDs(t, rows, []string{"search-t1"}, "owner filter")
 }
 
 // TestSearchDAODeleteByIDRemovesRow pins the delete semantics against Python:
@@ -300,7 +245,7 @@ func TestSearchDAODeleteByIDRemovesRow(t *testing.T) {
 
 	// Deletion is by id alone, so a row the permission layer would already hide
 	// (status != "1") is removed too, exactly as Python deletes it.
-	legacy := entity.Search{
+	legacy := entity.Search{UserID: "t1",
 		ID:           "s-legacy",
 		TenantID:     "t1",
 		Name:         "legacy",

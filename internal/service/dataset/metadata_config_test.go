@@ -51,7 +51,7 @@ func testDatasetServiceForDocumentMetadataConfig(t *testing.T) *DatasetService {
 
 func insertDatasetMetadataConfigKB(t *testing.T, datasetID, tenantID string) {
 	t.Helper()
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: tenantID,
 		ID:           datasetID,
 		TenantID:     tenantID,
 		Name:         "test-kb",
@@ -83,7 +83,7 @@ func insertDatasetMetadataConfigDoc(t *testing.T, docID, datasetID string, parse
 	if _, ok := parserConfig["Extractor:AutoExtractDefault"].(map[string]any); !ok {
 		parserConfig["Extractor:AutoExtractDefault"] = map[string]any{}
 	}
-	doc := &entity.Document{
+	doc := &entity.Document{UserID: "user-1",
 		ID:           docID,
 		KbID:         datasetID,
 		ParserID:     "naive",

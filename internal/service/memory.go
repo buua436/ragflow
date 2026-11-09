@@ -413,21 +413,15 @@ type MemoryFiltersResponse struct {
 }
 
 func (s *MemoryService) ListMemoryFilters(ctx context.Context) (*MemoryFiltersResponse, error) {
-	memoryScope, err := permission.NewDatabaseChecker(s.db).Scope(ctx, permission.ScopeQuery{
+	memoryScope, err := permission.NewDatabaseChecker(s.db).QueryScope(ctx, permission.ScopeQuery{
 		Kind:      permission.ResourceKindMemory,
 		Operation: permission.OperationRead,
 	})
 	if err != nil {
 		return nil, err
 	}
-	memoryIDs := memoryScope.ResourceIDs
-	if memoryScope.Mode != permission.ScopeIDs {
-		memoryIDs = []string{}
-	}
-	if len(memoryIDs) == 0 {
-		return &MemoryFiltersResponse{}, nil
-	}
-	memories, _, err := s.memoryDAO.GetByFilter(ctx, s.db, memoryIDs, nil, nil, "", "", 1, 0)
+	query := memoryScope.Apply(s.db.WithContext(ctx).Model(&entity.Memory{}))
+	memories, _, err := s.memoryDAO.GetByFilter(ctx, query, nil, "", "", 1, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -436,7 +430,7 @@ func (s *MemoryService) ListMemoryFilters(ctx context.Context) (*MemoryFiltersRe
 	typeCounts := map[string]int64{}
 	storageCounts := map[string]int64{}
 	for _, memory := range memories {
-		owner := memory.TenantID
+		owner := memory.UserID
 		label := owner
 		if memory.OwnerName != nil && *memory.OwnerName != "" {
 			label = *memory.OwnerName
@@ -1699,6 +1693,7 @@ func (s *MemoryService) ListMemories(ctx context.Context, tenantIDs []string, me
 	query := permission.ScopeQuery{
 		Kind:      permission.ResourceKindMemory,
 		Operation: permission.OperationRead,
+		TenantIDs: tenantIDs,
 	}
 	if canvasID != "" {
 		canvasRef := permission.ResourceRef{Kind: permission.ResourceKindCanvas, ID: canvasID}
@@ -1706,19 +1701,12 @@ func (s *MemoryService) ListMemories(ctx context.Context, tenantIDs []string, me
 		query.Entry = &canvasRef
 		query.EntryOp = permission.OperationRun
 	}
-	memoryScope, err := permission.NewDatabaseChecker(s.db).Scope(ctx, query)
+	memoryScope, err := permission.NewDatabaseChecker(s.db).QueryScope(ctx, query)
 	if err != nil {
 		return nil, err
 	}
-	memoryIDs := memoryScope.ResourceIDs
-	if memoryScope.Mode != permission.ScopeIDs {
-		memoryIDs = []string{}
-	}
-	if len(memoryIDs) == 0 {
-		return &ListMemoryResponse{MemoryList: []map[string]interface{}{}}, nil
-	}
-
-	memories, total, err := s.memoryDAO.GetByFilter(ctx, s.db, memoryIDs, tenantIDs, memoryTypes, storageType, keywords, page, pageSize)
+	queryDB := memoryScope.Apply(s.db.WithContext(ctx).Model(&entity.Memory{}))
+	memories, total, err := s.memoryDAO.GetByFilter(ctx, queryDB, memoryTypes, storageType, keywords, page, pageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -1726,13 +1714,18 @@ func (s *MemoryService) ListMemories(ctx context.Context, tenantIDs []string, me
 	memoryList := make([]map[string]interface{}, 0, len(memories))
 	modelNameCache := make(map[string]string)
 	checker := permission.NewDatabaseChecker(s.db)
-	for _, m := range memories {
-		access, err := checker.ResolveAccess(ctx, permission.ResourceRef{
-			Kind: permission.ResourceKindMemory,
-			ID:   m.ID,
-		})
-		if err != nil {
-			return nil, err
+	refs := make([]permission.ResourceRef, len(memories))
+	for i, memory := range memories {
+		refs[i] = permission.ResourceRef{Kind: permission.ResourceKindMemory, ID: memory.ID}
+	}
+	accesses, err := checker.FilterAccesses(ctx, refs, permission.OperationRead)
+	if err != nil {
+		return nil, err
+	}
+	for i, m := range memories {
+		access, ok := accesses[refs[i]]
+		if !ok {
+			return nil, permission.ErrPermissionDenied
 		}
 		resp := formatRetDataFromMemoryListItem(m)
 		var createDateStr *string

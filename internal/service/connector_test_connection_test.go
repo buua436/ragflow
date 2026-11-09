@@ -18,7 +18,7 @@ func TestConnectorServiceTestConnectorUsesRequestConfig(t *testing.T) {
 	if err := db.AutoMigrate(&entity.Connector{}, &entity.UserTenant{}); err != nil {
 		t.Fatalf("migrate connector tables: %v", err)
 	}
-	if err := db.Create(&entity.Connector{
+	if err := db.Create(&entity.Connector{UserID: "tenant-1",
 		ID:        "conn-1",
 		TenantID:  "tenant-1",
 		Name:      "conn-1",
@@ -117,7 +117,7 @@ func TestConnectorServiceTestConnectorRejectsUnauthorizedConnector(t *testing.T)
 	if err := db.AutoMigrate(&entity.Connector{}, &entity.UserTenant{}); err != nil {
 		t.Fatalf("migrate connector tables: %v", err)
 	}
-	if err := db.Create(&entity.Connector{
+	if err := db.Create(&entity.Connector{UserID: "tenant-1",
 		ID:        "conn-1",
 		TenantID:  "tenant-1",
 		Name:      "conn-1",

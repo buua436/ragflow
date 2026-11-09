@@ -1172,31 +1172,10 @@ func (s *ConnectorService) ResumeFailedSync(ctx context.Context, connectorID str
 	if req.TaskID == "" {
 		return false, common.CodeArgumentError, fmt.Errorf("required argument is missing: task_id")
 	}
-	if err := permission.NewDatabaseChecker(dao.DB).CheckResource(ctx, permission.ResourceRef{Kind: permission.ResourceKindConnector, ID: connectorID}, permission.OperationRun); err != nil {
-		code, permissionErr := permissionresponse.NormalizeHidden(err)
-		return false, code, permissionErr
-	}
 	connectorRef := permission.ResourceRef{Kind: permission.ResourceKindConnector, ID: connectorID}
-	taskScope, err := permission.NewDatabaseChecker(dao.DB).Scope(ctx, permission.ScopeQuery{
-		Kind:      permission.ResourceKindSyncTask,
-		Parent:    connectorRef,
-		Operation: permission.OperationRun,
-		Entry:     &connectorRef,
-		EntryOp:   permission.OperationRun,
-	})
-	if err != nil {
+	if err := permission.NewDatabaseChecker(dao.DB).CheckDependency(ctx, connectorRef,
+		permission.ResourceRef{Kind: permission.ResourceKindSyncTask, ID: req.TaskID}, permission.OperationRun, permission.OperationRun); err != nil {
 		code, permissionErr := permissionresponse.NormalizeHidden(err)
-		return false, code, permissionErr
-	}
-	taskAccessible := false
-	for _, taskID := range taskScope.ResourceIDs {
-		if taskID == req.TaskID {
-			taskAccessible = true
-			break
-		}
-	}
-	if !taskAccessible {
-		code, permissionErr := permissionresponse.NormalizeHidden(permission.ErrResourceNotFound)
 		return false, code, permissionErr
 	}
 	if err := permission.NewDatabaseChecker(dao.DB).CheckResource(ctx, permission.ResourceRef{Kind: permission.ResourceKindDataset, ID: req.KbID}, permission.OperationRun); err != nil {
@@ -1301,11 +1280,7 @@ func (s *ConnectorService) ListLog(ctx context.Context, connectorID string, page
 
 	checker := permission.NewDatabaseChecker(dao.DB)
 	connectorRef := permission.ResourceRef{Kind: permission.ResourceKindConnector, ID: connectorID}
-	if err := checker.CheckResource(ctx, connectorRef, permission.OperationRead); err != nil {
-		code, permissionErr := permissionresponse.NormalizeHidden(err)
-		return nil, 0, code, permissionErr
-	}
-	taskScope, err := checker.Scope(ctx, permission.ScopeQuery{
+	taskScope, err := checker.QueryScope(ctx, permission.ScopeQuery{
 		Kind:      permission.ResourceKindSyncTask,
 		Parent:    connectorRef,
 		Operation: permission.OperationRead,
@@ -1316,10 +1291,6 @@ func (s *ConnectorService) ListLog(ctx context.Context, connectorID string, page
 		code, permissionErr := permissionresponse.NormalizeHidden(err)
 		return nil, 0, code, permissionErr
 	}
-	taskIDs := taskScope.ResourceIDs
-	if taskScope.Mode != permission.ScopeIDs {
-		taskIDs = []string{}
-	}
 
 	if page < 1 {
 		page = common.DefaultPage
@@ -1329,7 +1300,8 @@ func (s *ConnectorService) ListLog(ctx context.Context, connectorID string, page
 	}
 	offset := (page - 1) * pageSize
 
-	logs, total, err := s.connectorDAO.ListLogsByTaskIDs(ctx, dao.DB, taskIDs, "", offset, pageSize)
+	query := taskScope.Apply(dao.DB.WithContext(ctx).Model(&entity.SyncLogs{}))
+	logs, total, err := s.connectorDAO.ListLogs(ctx, query, "", offset, pageSize)
 	if err != nil {
 		return nil, 0, common.CodeServerError, fmt.Errorf("failed to fetch connector logs: %w", err)
 	}
@@ -1353,34 +1325,12 @@ func (s *ConnectorService) ListLogs(ctx context.Context, datasetID string, page,
 		}
 	}
 	checker := permission.NewDatabaseChecker(dao.DB)
-	connectorScope, err := checker.Scope(ctx, permission.ScopeQuery{
-		Kind:      permission.ResourceKindConnector,
-		Operation: permission.OperationRead,
+	taskScope, err := checker.QueryScope(ctx, permission.ScopeQuery{
+		Kind: permission.ResourceKindSyncTask, Operation: permission.OperationRead,
 	})
 	if err != nil {
-		return nil, 0, common.CodeServerError, err
-	}
-	connectorIDs := connectorScope.ResourceIDs
-	if connectorScope.Mode != permission.ScopeIDs {
-		connectorIDs = []string{}
-	}
-	var taskIDs []string
-	for _, connectorID := range connectorIDs {
-		connectorRef := permission.ResourceRef{Kind: permission.ResourceKindConnector, ID: connectorID}
-		taskScope, err := checker.Scope(ctx, permission.ScopeQuery{
-			Kind:      permission.ResourceKindSyncTask,
-			Parent:    connectorRef,
-			Operation: permission.OperationRead,
-			Entry:     &connectorRef,
-			EntryOp:   permission.OperationRead,
-		})
-		if err != nil {
-			code, permissionErr := permissionresponse.NormalizeHidden(err)
-			return nil, 0, code, permissionErr
-		}
-		if taskScope.Mode == permission.ScopeIDs {
-			taskIDs = append(taskIDs, taskScope.ResourceIDs...)
-		}
+		code, permissionErr := permissionresponse.NormalizeHidden(err)
+		return nil, 0, code, permissionErr
 	}
 
 	offset, limit := 0, pageSize
@@ -1397,7 +1347,8 @@ func (s *ConnectorService) ListLogs(ctx context.Context, datasetID string, page,
 		offset = (page - 1) * limit
 	}
 
-	logs, total, err := s.connectorDAO.ListLogsByTaskIDs(ctx, dao.DB, taskIDs, datasetID, offset, limit)
+	query := taskScope.Apply(dao.DB.WithContext(ctx).Model(&entity.SyncLogs{}))
+	logs, total, err := s.connectorDAO.ListLogs(ctx, query, datasetID, offset, limit)
 	if err != nil {
 		return nil, 0, common.CodeServerError, fmt.Errorf("failed to fetch sync logs: %w", err)
 	}

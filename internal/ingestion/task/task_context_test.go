@@ -40,7 +40,7 @@ func TestLoadFromIngestionTask_DoesNotFallbackToKnowledgebasePipelineID(t *testi
 		t.Fatalf("create document: %v", err)
 	}
 	kbPipelineID := "kb-flow-1"
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "tenant-1",
 		ID:           "kb-1",
 		TenantID:     "tenant-1",
 		EmbdID:       "embd-1",
@@ -89,7 +89,7 @@ func TestLoadFromIngestionTask_PrefersDocumentPipelineID(t *testing.T) {
 		t.Fatalf("create document: %v", err)
 	}
 	kbPipelineID := "kb-flow-1"
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "tenant-1",
 		ID:           "kb-1",
 		TenantID:     "tenant-1",
 		EmbdID:       "embd-1",

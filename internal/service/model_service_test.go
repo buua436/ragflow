@@ -1101,6 +1101,10 @@ func TestModelFactoryResolveModelConfigByID(t *testing.T) {
 func TestModelProviderServiceMissingProviderAndInstancePreserveLookupError(t *testing.T) {
 	db := setupModelProviderServiceTestDB(t)
 	useModelProviderServiceTestDB(t, db)
+	activeStatus := string(entity.StatusValid)
+	if err := db.Create(&entity.UserTenant{ID: "owner-tenant-1", UserID: "user-1", TenantID: "tenant-1", Role: "owner", Status: &activeStatus}).Error; err != nil {
+		t.Fatalf("create tenant owner membership: %v", err)
+	}
 	if err := db.Create(&entity.TenantModelProvider{
 		ID:           "provider-1",
 		UserID:       "user-1",
@@ -1479,8 +1483,12 @@ func TestModelFactoryResolveModelConfigPrefersTenantToolFlag(t *testing.T) {
 
 	db := setupModelProviderServiceTestDB(t)
 	useModelProviderServiceTestDB(t, db)
+	activeStatus := string(entity.StatusValid)
+	if err := db.Create(&entity.UserTenant{ID: "owner-tenant-1", UserID: "user-1", TenantID: "tenant-1", Role: "owner", Status: &activeStatus}).Error; err != nil {
+		t.Fatalf("create tenant owner membership: %v", err)
+	}
 	rows := []interface{}{
-		&entity.TenantModelProvider{ID: "provider-openai", UserID: "tenant-1", TenantID: "tenant-1", ProviderName: "OpenAI"},
+		&entity.TenantModelProvider{ID: "provider-openai", UserID: "user-1", TenantID: "tenant-1", ProviderName: "OpenAI"},
 		&entity.TenantModelInstance{ID: "instance-openai", ProviderID: "provider-openai", InstanceName: "default", APIKey: "sk-test", Status: "active", Extra: "{}"},
 		// Catalog says tools are supported; the tenant disabled them.
 		&entity.TenantModel{ID: "model-on-off", ProviderID: "provider-openai", InstanceID: "instance-openai", ModelName: toolsOn, ModelType: int(entity.ModelTypeChat), Status: "active", Extra: `{"is_tools":false}`},

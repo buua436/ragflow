@@ -27,6 +27,7 @@ import (
 	modelModule "ragflow/internal/entity/models"
 	"ragflow/internal/ingestion/component/schema"
 	"ragflow/internal/parser/parser"
+	"ragflow/internal/permission"
 
 	"gorm.io/gorm"
 )
@@ -86,7 +87,7 @@ func maybeDispatchTenantPDFParser(ctx context.Context, db *gorm.DB, filename str
 	var instance *entity.TenantModelInstance
 	var err error
 	if composite {
-		owner, ownerErr := dao.NewUserTenantDAO().GetOwnerByTenantID(ctx, db, tenantID)
+		owner, ownerErr := permission.TenantOwnerMembership(ctx, db, tenantID)
 		if ownerErr != nil {
 			return parser.ParseResult{}, true, fmt.Errorf("parser: tenant owner lookup: %w", ownerErr)
 		}

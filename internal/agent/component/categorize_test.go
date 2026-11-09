@@ -726,6 +726,13 @@ func setupComponentTestDB(t *testing.T) *gorm.DB {
 	); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	status := string(entity.StatusValid)
+	if err := db.Create(&entity.UserTenant{
+		ID: "owner-tenant-1", UserID: "tenant-1", TenantID: "tenant-1",
+		Role: "owner", Status: &status,
+	}).Error; err != nil {
+		t.Fatalf("create tenant owner membership: %v", err)
+	}
 	return db
 }
 

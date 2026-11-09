@@ -451,7 +451,7 @@ func TestParserComponent_Invoke_ResolvesBinaryFromDocID(t *testing.T) {
 		t.Fatalf("seed storage: %v", err)
 	}
 	docName := "parser.txt"
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "u1",
 		ID:           "doc-parser",
 		KbID:         "kb-parser",
 		ParserID:     "na",

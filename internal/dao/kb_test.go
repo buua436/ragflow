@@ -49,7 +49,7 @@ func setupKBTestDB(t *testing.T) *gorm.DB {
 
 func testKnowledgebase(t *testing.T, db *gorm.DB, id string, docNum, tokenNum, chunkNum int64) *entity.Knowledgebase {
 	t.Helper()
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "tenant-1",
 		ID:       id,
 		TenantID: "tenant-1",
 		Name:     "test-kb-" + id,
@@ -140,9 +140,9 @@ var knowledgebaseQualifiedOrderExpressions = []string{
 func seedOrderableKnowledgebases(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	kbs := []entity.Knowledgebase{
-		{ID: "kb-1", TenantID: "t1", Name: "zulu", EmbdID: "embd-1", CreatedBy: "t1", Permission: "me", Status: stringPtr(string(entity.StatusValid)), BaseModel: entity.BaseModel{CreateTime: int64Ptr(100)}},
-		{ID: "kb-2", TenantID: "t1", Name: "mike", EmbdID: "embd-1", CreatedBy: "t1", Permission: "me", Status: stringPtr(string(entity.StatusValid)), BaseModel: entity.BaseModel{CreateTime: int64Ptr(200)}},
-		{ID: "kb-3", TenantID: "t1", Name: "alpha", EmbdID: "embd-1", CreatedBy: "t1", Permission: "me", Status: stringPtr(string(entity.StatusValid)), BaseModel: entity.BaseModel{CreateTime: int64Ptr(300)}},
+		{UserID: "t1", ID: "kb-1", TenantID: "t1", Name: "zulu", EmbdID: "embd-1", CreatedBy: "t1", Permission: "me", Status: stringPtr(string(entity.StatusValid)), BaseModel: entity.BaseModel{CreateTime: int64Ptr(100)}},
+		{UserID: "t1", ID: "kb-2", TenantID: "t1", Name: "mike", EmbdID: "embd-1", CreatedBy: "t1", Permission: "me", Status: stringPtr(string(entity.StatusValid)), BaseModel: entity.BaseModel{CreateTime: int64Ptr(200)}},
+		{UserID: "t1", ID: "kb-3", TenantID: "t1", Name: "alpha", EmbdID: "embd-1", CreatedBy: "t1", Permission: "me", Status: stringPtr(string(entity.StatusValid)), BaseModel: entity.BaseModel{CreateTime: int64Ptr(300)}},
 	}
 	for i := range kbs {
 		if err := db.Create(&kbs[i]).Error; err != nil {
@@ -178,9 +178,10 @@ func TestKnowledgebaseDAOListByResourceIDsOrderByExpressionFallsBack(t *testing.
 
 	for _, orderby := range knowledgebaseQualifiedOrderExpressions {
 		t.Run(orderby, func(t *testing.T) {
-			rows, _, err := d.ListByResourceIDs(ctx, db, []string{"kb-1", "kb-2", "kb-3"}, nil, 1, 10, []OrderTerm{{Column: orderby}}, "", "", "")
+			query := db.Model(&entity.Knowledgebase{}).Where("knowledgebase.id IN ?", []string{"kb-1", "kb-2", "kb-3"})
+			rows, _, err := d.ListByQuery(ctx, query, 1, 10, []OrderTerm{{Column: orderby}}, "", "", "")
 			if err != nil {
-				t.Fatalf("ListByResourceIDs with orderby %q: %v", orderby, err)
+				t.Fatalf("ListByQuery with orderby %q: %v", orderby, err)
 			}
 			ids := make([]string, 0, len(rows))
 			for _, row := range rows {
@@ -203,9 +204,10 @@ func TestKnowledgebaseDAOOrderByAllowedColumn(t *testing.T) {
 	ctx := t.Context()
 	d := NewKnowledgebaseDAO()
 
-	rows, _, err := d.ListByResourceIDs(ctx, db, []string{"kb-1", "kb-2", "kb-3"}, nil, 1, 10, []OrderTerm{{Column: "name"}}, "", "", "")
+	query := db.Model(&entity.Knowledgebase{}).Where("knowledgebase.id IN ?", []string{"kb-1", "kb-2", "kb-3"})
+	rows, _, err := d.ListByQuery(ctx, query, 1, 10, []OrderTerm{{Column: "name"}}, "", "", "")
 	if err != nil {
-		t.Fatalf("ListByResourceIDs ascending by name: %v", err)
+		t.Fatalf("ListByQuery ascending by name: %v", err)
 	}
 	ids := make([]string, 0, len(rows))
 	for _, row := range rows {

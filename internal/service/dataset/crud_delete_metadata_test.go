@@ -31,7 +31,7 @@ func (e *recordingMetadataEngine) DeleteMetadata(_ context.Context, cond map[str
 func TestDeleteDatasetEngineDataDeletesMetadataByDataset(t *testing.T) {
 	eng := &recordingMetadataEngine{}
 	svc := &DatasetService{docEngine: eng}
-	svc.deleteDatasetEngineData(context.Background(), &entity.Knowledgebase{ID: "kb-1", TenantID: "tenant-1"}, []string{"doc-1", "doc-2"})
+	svc.deleteDatasetEngineData(context.Background(), &entity.Knowledgebase{UserID: "tenant-1", ID: "kb-1", TenantID: "tenant-1"}, []string{"doc-1", "doc-2"})
 
 	if got := eng.cond["kb_id"]; got != "kb-1" {
 		t.Fatalf("metadata condition kb_id = %v, want kb-1", got)

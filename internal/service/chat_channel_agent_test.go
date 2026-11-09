@@ -18,7 +18,9 @@ import (
 func TestChatChannelAgentBindingRoundTrip(t *testing.T) {
 	db := setupChatChannelServiceTestDB(t)
 	ctx := serviceTestContext(t, "owner", "owner")
-	if err := db.Create(&entity.UserCanvas{ID: "agent", UserID: "owner", Title: new("Workflow")}).Error; err != nil {
+	if err := db.Create(&entity.UserCanvas{ID: "agent", UserID: "owner", Title: new("Workflow"),
+		TenantID: sptr("owner"),
+	}).Error; err != nil {
 		t.Fatal(err)
 	}
 	createServiceTestDialog(t, db, "chat", "owner", "Chat")
@@ -66,10 +68,10 @@ func TestChatChannelRejectsCrossTenantBindingAndExecution(t *testing.T) {
 	if _, err := svc.CreateChatChannel(ctx, "invalid", "telegram", entity.JSONMap{}, new("private"), nil); err == nil {
 		t.Fatal("accepted a target unavailable to the channel tenant")
 	}
-	createServiceTestChannel(t, db, &entity.ChatChannel{
+	createServiceTestChannel(t, db, &entity.ChatChannel{UserID: "other",
 		ID: "historical", TenantID: "other", Channel: "telegram", Config: entity.JSONMap{}, ChatID: new("private"), Status: 1,
 	})
-	if _, err := svc.HandleIncomingMessage(t.Context(), ChatChannelIncomingMessage{AccountID: "historical", ChatID: "external", Text: "hello"}, nil); !errors.Is(err, permission.ErrPermissionDenied) {
+	if _, err := svc.HandleIncomingMessage(t.Context(), ChatChannelIncomingMessage{AccountID: "historical", ChatID: "external", Text: "hello"}, nil); !errors.Is(err, permission.ErrResourceNotFound) {
 		t.Fatalf("historical unauthorized binding: %v", err)
 	}
 }
@@ -81,6 +83,7 @@ func TestChatChannelAgentRevokedAccess(t *testing.T) {
 	if err := db.Create(agent).Error; err != nil {
 		t.Fatal(err)
 	}
+	ctx = serviceTestContext(t, "owner", "owner")
 	svc := NewChatChannelService()
 	channel, err := svc.CreateChatChannel(ctx, "channel", "telegram", entity.JSONMap{}, nil, new("shared"))
 	if err != nil {
@@ -89,6 +92,7 @@ func TestChatChannelAgentRevokedAccess(t *testing.T) {
 	if err := db.Model(agent).Update("permission", string(entity.TenantPermissionMe)).Error; err != nil {
 		t.Fatal(err)
 	}
+	revokeServiceTestResource(t, "owner", "canvas", agent.ID, "owner")
 	svc.agentRunner = channelAgentRunnerFunc(func(context.Context, string, string, string, any, []map[string]any) (<-chan canvas.RunEvent, error) {
 		t.Fatal("revoked workflow must not execute")
 		return nil, nil

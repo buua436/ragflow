@@ -123,7 +123,7 @@ func (s *SkillSpaceService) getSkillsFolderID(ctx context.Context, tenantID stri
 	s.skillsFolderMu.RUnlock()
 
 	// Get root folder
-	rootFolder, err := s.fileDAO.GetRootFolder(ctx, dao.DB, tenantID)
+	rootFolder, err := file.GetOrCreateRootFolder(ctx, dao.DB)
 	if err != nil {
 		return "", fmt.Errorf("failed to get root folder: %w", err)
 	}
@@ -150,16 +150,21 @@ func (s *SkillSpaceService) getSkillsFolderID(ctx context.Context, tenantID stri
 	folder := &entity.File{
 		ID:         folderID,
 		ParentID:   rootFolder.ID,
-		UserID:     tenantID,
+		UserID:     rootFolder.UserID,
 		TenantID:   tenantID,
-		CreatedBy:  tenantID,
+		CreatedBy:  rootFolder.CreatedBy,
 		Name:       "skills",
 		Type:       "folder",
 		Size:       0,
 		SourceType: "system",
 	}
 
-	if err = s.fileDAO.Create(ctx, dao.DB, folder); err != nil {
+	if err = dao.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.fileDAO.Create(ctx, tx, folder); err != nil {
+			return err
+		}
+		return permission.NewDatabaseChecker(tx).GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindFolder, ID: folder.ID})
+	}); err != nil {
 		return "", fmt.Errorf("failed to create skills folder: %w", err)
 	}
 
@@ -331,7 +336,7 @@ func (s *SkillSpaceService) CreateSpace(ctx context.Context, req *CreateSpaceReq
 
 // ListSpaces lists skill spaces the caller can read.
 func (s *SkillSpaceService) ListSpaces(ctx context.Context) (map[string]interface{}, common.ErrorCode, error) {
-	spaceScope, err := permission.NewDatabaseChecker(dao.DB).Scope(ctx, permission.ScopeQuery{
+	spaceScope, err := permission.NewDatabaseChecker(dao.DB).QueryScope(ctx, permission.ScopeQuery{
 		Kind:      permission.ResourceKindSkillSpace,
 		Operation: permission.OperationRead,
 	})
@@ -339,11 +344,8 @@ func (s *SkillSpaceService) ListSpaces(ctx context.Context) (map[string]interfac
 		code, normalized := permissionresponse.NormalizeHidden(err)
 		return nil, code, normalized
 	}
-	spaceIDs := spaceScope.ResourceIDs
-	if spaceScope.Mode != permission.ScopeIDs {
-		spaceIDs = []string{}
-	}
-	spaces, err := s.spaceDAO.GetByIDs(ctx, dao.DB, spaceIDs)
+	query := spaceScope.Apply(dao.DB.WithContext(ctx).Model(&entity.SkillSpace{}))
+	spaces, err := s.spaceDAO.List(ctx, query)
 	if err != nil {
 		return nil, common.CodeOperatingError, fmt.Errorf("failed to list spaces: %w", err)
 	}

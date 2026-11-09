@@ -25,11 +25,11 @@ func seedFileBrowsing(t *testing.T) {
 		t.Fatalf("prepare tenant permission fixture: %v", err)
 	}
 	for _, entry := range []entity.File{
-		{ID: "root", ParentID: "root", TenantID: "owner", CreatedBy: "owner", Name: "/", Type: FileTypeFolder},
-		{ID: "tags", ParentID: "root", TenantID: "owner", CreatedBy: "reader", Name: "tags.txt", Type: "doc"},
-		{ID: "private", ParentID: "root", TenantID: "owner", CreatedBy: "owner", Name: "private.txt", Type: "doc"},
-		{ID: "foreign-root", ParentID: "foreign-root", TenantID: "foreign", Name: "/", Type: FileTypeFolder},
-		{ID: "foreign-tags", ParentID: "foreign-root", TenantID: "foreign", Name: "tags.txt", Type: "doc"},
+		{UserID: "owner", ID: "root", ParentID: "root", TenantID: "owner", CreatedBy: "owner", Name: "/", Type: FileTypeFolder},
+		{UserID: "reader", ID: "tags", ParentID: "root", TenantID: "owner", CreatedBy: "reader", Name: "tags.txt", Type: "doc"},
+		{UserID: "owner", ID: "private", ParentID: "root", TenantID: "owner", CreatedBy: "owner", Name: "private.txt", Type: "doc"},
+		{UserID: "foreign", ID: "foreign-root", ParentID: "foreign-root", TenantID: "foreign", Name: "/", Type: FileTypeFolder},
+		{UserID: "foreign", ID: "foreign-tags", ParentID: "foreign-root", TenantID: "foreign", Name: "tags.txt", Type: "doc"},
 	} {
 		if err := db.Create(&entry).Error; err != nil {
 			t.Fatal(err)

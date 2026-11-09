@@ -384,8 +384,8 @@ func TestNLPRetrievalAdapter_ResolveDatasetsRequiresEveryDataset(t *testing.T) {
 	a := &NLPRetrievalAdapter{
 		kbDAO: fakeKnowledgebaseLookup{
 			kbs: []*entity.Knowledgebase{
-				{ID: "kb-1", TenantID: "tenant-a"},
-				{ID: "kb-2", TenantID: "tenant-a"},
+				{UserID: "tenant-a", ID: "kb-1", TenantID: "tenant-a"},
+				{UserID: "tenant-a", ID: "kb-2", TenantID: "tenant-a"},
 			},
 		},
 	}
@@ -403,8 +403,8 @@ func TestNLPRetrievalAdapter_SearchRejectsDatasetsFromMultipleTenants(t *testing
 		svc: &nlp.RetrievalService{},
 		kbDAO: fakeKnowledgebaseLookup{
 			kbs: []*entity.Knowledgebase{
-				{ID: "kb-1", TenantID: "tenant-a", EmbdID: "embedding@provider"},
-				{ID: "kb-2", TenantID: "tenant-b", EmbdID: "embedding@provider"},
+				{UserID: "tenant-a", ID: "kb-1", TenantID: "tenant-a", EmbdID: "embedding@provider"},
+				{UserID: "tenant-b", ID: "kb-2", TenantID: "tenant-b", EmbdID: "embedding@provider"},
 			},
 		},
 	}
@@ -426,7 +426,7 @@ func TestNLPRetrievalAdapter_SearchRequiresDatasetUsePermission(t *testing.T) {
 		t.Fatalf("migrate permission tables: %v", err)
 	}
 	status := string(entity.StatusValid)
-	dataset := entity.Knowledgebase{
+	dataset := entity.Knowledgebase{UserID: "owner",
 		ID: "kb-private", TenantID: "tenant-1", Name: "private", EmbdID: "embedding@provider",
 		Permission: string(entity.TenantPermissionMe), CreatedBy: "owner", Status: &status,
 	}
@@ -464,9 +464,9 @@ func TestNLPRetrievalAdapter_ResolveDatasetsFromDatasetIDs(t *testing.T) {
 	a := &NLPRetrievalAdapter{
 		kbDAO: fakeKnowledgebaseLookup{
 			kbs: []*entity.Knowledgebase{
-				{ID: "kb-1", TenantID: "tenant-a"},
-				{ID: "kb-2", TenantID: "tenant-b"},
-				{ID: "kb-3", TenantID: "tenant-a"},
+				{UserID: "tenant-a", ID: "kb-1", TenantID: "tenant-a"},
+				{UserID: "tenant-b", ID: "kb-2", TenantID: "tenant-b"},
+				{UserID: "tenant-a", ID: "kb-3", TenantID: "tenant-a"},
 			},
 		},
 	}
@@ -485,7 +485,7 @@ func TestNLPRetrievalAdapter_ResolveDatasetsUsesDatasetTenants(t *testing.T) {
 	a := &NLPRetrievalAdapter{
 		kbDAO: fakeKnowledgebaseLookup{
 			kbs: []*entity.Knowledgebase{
-				{ID: "kb-1", TenantID: "tenant-b"},
+				{UserID: "tenant-b", ID: "kb-1", TenantID: "tenant-b"},
 			},
 		},
 	}
@@ -510,7 +510,7 @@ func TestNLPRetrievalAdapter_ResolveEmbeddingModelPriority(t *testing.T) {
 	}{
 		{
 			name: "tenant embedding id",
-			kb: &entity.Knowledgebase{
+			kb: &entity.Knowledgebase{UserID: "tenant-1",
 				ID:           "kb-1",
 				TenantID:     "tenant-1",
 				EmbdID:       "embedding@provider",
@@ -520,7 +520,7 @@ func TestNLPRetrievalAdapter_ResolveEmbeddingModelPriority(t *testing.T) {
 		},
 		{
 			name: "knowledge base embedding reference",
-			kb: &entity.Knowledgebase{
+			kb: &entity.Knowledgebase{UserID: "tenant-1",
 				ID:       "kb-1",
 				TenantID: "tenant-1",
 				EmbdID:   "embedding@provider",
@@ -529,7 +529,7 @@ func TestNLPRetrievalAdapter_ResolveEmbeddingModelPriority(t *testing.T) {
 		},
 		{
 			name: "tenant default only when knowledge base has no model",
-			kb: &entity.Knowledgebase{
+			kb: &entity.Knowledgebase{UserID: "tenant-1",
 				ID:       "kb-1",
 				TenantID: "tenant-1",
 			},
@@ -567,8 +567,8 @@ func TestValidateEmbeddingModelsRejectsDifferentTenantModels(t *testing.T) {
 	firstID := "tenant-embedding-1"
 	secondID := "tenant-embedding-2"
 	err := validateEmbeddingModels(t.Context(), nil, []*entity.Knowledgebase{
-		{ID: "kb-1", TenantID: "tenant-1", TenantEmbdID: &firstID},
-		{ID: "kb-2", TenantID: "tenant-1", TenantEmbdID: &secondID},
+		{UserID: "tenant-1", ID: "kb-1", TenantID: "tenant-1", TenantEmbdID: &firstID},
+		{UserID: "tenant-1", ID: "kb-2", TenantID: "tenant-1", TenantEmbdID: &secondID},
 	})
 	if err == nil {
 		t.Fatal("expected different tenant embedding models to be rejected")
@@ -579,8 +579,8 @@ func TestValidateEmbeddingModelsAllowsSameBaseAcrossInstances(t *testing.T) {
 	// Datasets using the same base embedding model through different provider
 	// instances must validate together, matching the chat/dataset-search rule.
 	err := validateEmbeddingModels(t.Context(), nil, []*entity.Knowledgebase{
-		{ID: "kb-1", TenantID: "tenant-1", EmbdID: "BAAI/bge-m3@renew@SILICONFLOW"},
-		{ID: "kb-2", TenantID: "tenant-1", EmbdID: "BAAI/bge-m3@COPY@SILICONFLOW"},
+		{UserID: "tenant-1", ID: "kb-1", TenantID: "tenant-1", EmbdID: "BAAI/bge-m3@renew@SILICONFLOW"},
+		{UserID: "tenant-1", ID: "kb-2", TenantID: "tenant-1", EmbdID: "BAAI/bge-m3@COPY@SILICONFLOW"},
 	})
 	if err != nil {
 		t.Fatalf("expected same-base composites to be accepted, got %v", err)
@@ -589,8 +589,8 @@ func TestValidateEmbeddingModelsAllowsSameBaseAcrossInstances(t *testing.T) {
 
 func TestValidateEmbeddingModelsRejectsDifferentBases(t *testing.T) {
 	err := validateEmbeddingModels(t.Context(), nil, []*entity.Knowledgebase{
-		{ID: "kb-1", TenantID: "tenant-1", EmbdID: "BAAI/bge-m3@renew@SILICONFLOW"},
-		{ID: "kb-2", TenantID: "tenant-1", EmbdID: "Qwen/Qwen3-Embedding-0.6B@renew@SILICONFLOW"},
+		{UserID: "tenant-1", ID: "kb-1", TenantID: "tenant-1", EmbdID: "BAAI/bge-m3@renew@SILICONFLOW"},
+		{UserID: "tenant-1", ID: "kb-2", TenantID: "tenant-1", EmbdID: "Qwen/Qwen3-Embedding-0.6B@renew@SILICONFLOW"},
 	})
 	if err == nil {
 		t.Fatal("expected different base embedding models to be rejected")
@@ -658,7 +658,7 @@ func (s *stubRankFeatureEnhancer) RetrieveByChildren(
 }
 
 func testRankFeatureKBs() []*entity.Knowledgebase {
-	return []*entity.Knowledgebase{{ID: "kb-1", TenantID: "tenant-1"}}
+	return []*entity.Knowledgebase{{UserID: "tenant-1", ID: "kb-1", TenantID: "tenant-1"}}
 }
 
 // No tag source: labelling yields nil, which must still reach the request as an

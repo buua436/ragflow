@@ -36,9 +36,11 @@ func seedDataflowCanvasWithVersion(t *testing.T, db *gorm.DB, canvasID, versionI
 	if err := db.AutoMigrate(&entity.UserCanvasVersion{}); err != nil {
 		t.Fatalf("migrate version table: %v", err)
 	}
+	tenantID := "tenant-1"
 	canvas := &entity.UserCanvas{
 		ID:             canvasID,
 		UserID:         "tenant-1",
+		TenantID:       &tenantID,
 		CanvasCategory: "dataflow_canvas",
 		Permission:     "me",
 		DSL:            entity.JSONMap{"graph": "legacy"},
@@ -60,7 +62,7 @@ func seedDataflowCanvasWithVersion(t *testing.T, db *gorm.DB, canvasID, versionI
 // seedBoundKB creates a knowledgebase already bound to a pipeline version.
 func seedBoundKB(t *testing.T, db *gorm.DB, kbID, canvasID, versionID string) {
 	t.Helper()
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "tenant-1",
 		ID:                kbID,
 		TenantID:          "tenant-1",
 		CreatedBy:         "tenant-1",
@@ -214,6 +216,7 @@ func seedDataflowCanvas(t *testing.T, db *gorm.DB, canvasID string) {
 		CanvasCategory: "dataflow_canvas",
 		Permission:     "me",
 		DSL:            entity.JSONMap{"graph": "legacy"},
+		TenantID:       sptr("tenant-1"),
 	}
 	if err := db.Create(canvas).Error; err != nil {
 		t.Fatalf("seed canvas: %v", err)

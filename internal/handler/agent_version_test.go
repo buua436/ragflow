@@ -50,7 +50,8 @@ func TestAgentVersionActions(t *testing.T) {
 				current := entity.UserCanvas{
 					ID: "canvas-1", UserID: "user-1", Title: sptr("Current Agent"),
 					Description: sptr("Current description"), Tags: "keep", Release: true,
-					DSL: entity.JSONMap{"components": map[string]interface{}{}, "revision": "current"},
+					DSL:      entity.JSONMap{"components": map[string]interface{}{}, "revision": "current"},
+					TenantID: sptr("user-1"),
 				}
 				if scenario == "foreign_agent" {
 					current.UserID = "user-2"

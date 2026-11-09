@@ -733,7 +733,7 @@ func (m *ModelProviderService) findProviderByIDOrNameInCurrentTenant(ctx context
 			if !includeTenantOwner {
 				return nil, gorm.ErrRecordNotFound
 			}
-			owner, ownerErr := m.userTenantDAO.GetOwnerByTenantID(ctx, dao.DB, tenantID)
+			owner, ownerErr := permission.TenantOwnerMembership(ctx, dao.DB, tenantID)
 			if ownerErr != nil {
 				return nil, ownerErr
 			}
@@ -750,7 +750,7 @@ func (m *ModelProviderService) findProviderByIDOrNameInCurrentTenant(ctx context
 	if err == nil || !errors.Is(err, gorm.ErrRecordNotFound) || !includeTenantOwner {
 		return provider, err
 	}
-	owner, err := m.userTenantDAO.GetOwnerByTenantID(ctx, dao.DB, tenantID)
+	owner, err := permission.TenantOwnerMembership(ctx, dao.DB, tenantID)
 	if err != nil {
 		return nil, err
 	}
@@ -1881,7 +1881,7 @@ func (m *ModelProviderService) ListModelsForUserInTenant(ctx context.Context, re
 	}
 
 	checker := permission.NewDatabaseChecker(dao.DB)
-	tenantOwner, err := m.userTenantDAO.GetOwnerByTenantID(ctx, dao.DB, tenantID)
+	tenantOwner, err := permission.TenantOwnerMembership(ctx, dao.DB, tenantID)
 	if err != nil {
 		return nil, common.CodeServerError, fmt.Errorf("get tenant owner for model listing: %w", err)
 	}

@@ -176,13 +176,21 @@ func ocrProviderAliases(providerName string) []string {
 }
 
 func resolveDefaultModelMembership(ctx context.Context, db *gorm.DB, tenantID string) (*entity.UserTenant, error) {
-	membershipDAO := dao.NewUserTenantDAO()
 	userID := permission.UserIDFromContext(ctx)
 	contextTenantID := permission.TenantIDFromContext(ctx)
-	if userID != "" && (contextTenantID == "" || contextTenantID == tenantID) {
-		return membershipDAO.FilterByUserIDAndTenantID(ctx, db, userID, tenantID)
+	if userID == "" {
+		return nil, permission.ErrUnauthenticated
 	}
-	return membershipDAO.GetOwnerByTenantID(ctx, db, tenantID)
+	if contextTenantID == "" {
+		return nil, permission.ErrTenantContextMissing
+	}
+	if contextTenantID != tenantID {
+		return nil, permission.ErrIdentityMismatch
+	}
+	if err := permission.NewDatabaseChecker(db).CheckTenant(ctx, tenantID, permission.TenantMember); err != nil {
+		return nil, err
+	}
+	return dao.NewUserTenantDAO().FilterByUserIDAndTenantID(ctx, db, userID, tenantID)
 }
 
 func tenantModelIDByType(membership *entity.UserTenant, modelType entity.ModelType) string {
@@ -242,7 +250,7 @@ func resolveModelConfigByID(ctx context.Context, db *gorm.DB, tenantID string, m
 
 	// Scope the lookup itself so missing and foreign models are indistinguishable
 	// before exposing status, type, instance configuration, or driver details.
-	owner, err := dao.NewUserTenantDAO().GetOwnerByTenantID(ctx, db, tenantID)
+	owner, err := permission.TenantOwnerMembership(ctx, db, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve tenant owner for model lookup: %w", err)
 	}
@@ -444,7 +452,7 @@ func errorsIsRecordNotFound(err error) bool {
 }
 
 func getTenantModelProviderByName(ctx context.Context, db *gorm.DB, tenantID, providerName string) (*entity.TenantModelProvider, error) {
-	owner, err := dao.NewUserTenantDAO().GetOwnerByTenantID(ctx, db, tenantID)
+	owner, err := permission.TenantOwnerMembership(ctx, db, tenantID)
 	if err != nil {
 		return nil, err
 	}

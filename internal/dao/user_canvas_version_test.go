@@ -103,7 +103,7 @@ func TestCountPipelineVersionReferences_SumsKBAndDocument(t *testing.T) {
 	v2 := "version0000000000000000000000bb"
 
 	// One KB + two documents pin v1.
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "u",
 		ID: "kb-1", TenantID: "t1", Name: "kb-1", EmbdID: "e", CreatedBy: "u",
 		Permission: string(entity.TenantPermissionMe), Status: sp("1"),
 		PipelineVersionID: &v1,
@@ -120,7 +120,7 @@ func TestCountPipelineVersionReferences_SumsKBAndDocument(t *testing.T) {
 		}
 	}
 	// One KB pins v2 (must not be counted toward v1).
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "u",
 		ID: "kb-2", TenantID: "t1", Name: "kb-2", EmbdID: "e", CreatedBy: "u",
 		Permission: string(entity.TenantPermissionMe), Status: sp("1"),
 		PipelineVersionID: &v2,

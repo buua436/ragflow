@@ -92,7 +92,7 @@ func createChatRESTUpdateServiceTestChat(t *testing.T, db *gorm.DB, id, tenantID
 
 	name := "chat-" + id
 	status := string(entity.StatusValid)
-	chat := &entity.Chat{
+	chat := &entity.Chat{UserID: tenantID,
 		ID:           id,
 		TenantID:     tenantID,
 		Name:         &name,
@@ -120,7 +120,7 @@ func insertForeignPrivateDatasetForChatTest(t *testing.T, db *gorm.DB) {
 	}).Error; err != nil {
 		t.Fatalf("failed to create foreign tenant owner: %v", err)
 	}
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-2",
 		ID: "kb-private", TenantID: "user-2", CreatedBy: "user-2", Name: "private dataset",
 		ChunkNum: 1, Permission: string(entity.TenantPermissionMe), Status: &status,
 	}).Error; err != nil {
@@ -703,7 +703,7 @@ func TestChatServiceCreatePromptDefaultsContract(t *testing.T) {
 func TestChatServiceCreateWithDatasetSeedsDatasetSystemPrompt(t *testing.T) {
 	db := setupChatRESTUpdateServiceTestDB(t)
 	status := string(entity.StatusValid)
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID: "kb-1", TenantID: "user-1", CreatedBy: "user-1", Name: "dataset",
 		ChunkNum: 1, Permission: string(entity.TenantPermissionMe), Status: &status,
 	}).Error; err != nil {

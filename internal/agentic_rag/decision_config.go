@@ -28,6 +28,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 )
 
 // The judge used to be a process-wide singleton built from the environment.
@@ -51,24 +52,31 @@ type decisionScope struct {
 
 type decisionScopeContextKey struct{}
 
-// withDecisionScope attaches the tenant/chat the run belongs to.
+// withDecisionScope selects the run tenant in the shared permission context
+// and records the chat override used by decision model selection.
 func withDecisionScope(ctx context.Context, tenantID, chatID string, userIDs ...string) context.Context {
 	userID := ""
 	if len(userIDs) > 0 {
 		userID = strings.TrimSpace(userIDs[0])
 	}
-	return context.WithValue(ctx, decisionScopeContextKey{}, decisionScope{
-		tenantID: strings.TrimSpace(tenantID),
-		chatID:   strings.TrimSpace(chatID),
-		userID:   userID,
-	})
+	tenantID = strings.TrimSpace(tenantID)
+	if userID != "" {
+		ctx = permission.WithIdentity(ctx, userID, tenantID)
+	} else {
+		ctx = permission.WithTenantID(ctx, tenantID)
+	}
+	return context.WithValue(ctx, decisionScopeContextKey{}, strings.TrimSpace(chatID))
 }
 
-// decisionScopeFrom returns the run's scope, or the zero value when the caller
-// published none.
+// decisionScopeFrom reads the authenticated identity from the shared context
+// and the chat override attached to this run.
 func decisionScopeFrom(ctx context.Context) decisionScope {
-	scope, _ := ctx.Value(decisionScopeContextKey{}).(decisionScope)
-	return scope
+	chatID, _ := ctx.Value(decisionScopeContextKey{}).(string)
+	return decisionScope{
+		tenantID: permission.TenantIDFromContext(ctx),
+		chatID:   chatID,
+		userID:   permission.UserIDFromContext(ctx),
+	}
 }
 
 // decisionConfigTTL bounds how long a resolved backend is reused.
@@ -142,22 +150,22 @@ func decisionModelIDFor(ctx context.Context, scope decisionScope) string {
 		return ""
 	}
 	if scope.chatID != "" {
-		var chat entity.Chat
-		if err := dao.DB.Where("id = ?", scope.chatID).First(&chat).Error; err == nil {
-			if id := resolvedDecisionID(chat.TenantDecisionID, chat.DecisionID); id != "" {
-				return id
+		checker := permission.NewDatabaseChecker(dao.DB)
+		if err := checker.CheckResource(ctx, permission.ResourceRef{Kind: permission.ResourceKindChat, ID: scope.chatID}, permission.OperationUse); err == nil {
+			var chat entity.Chat
+			if err := dao.DB.Where("id = ? AND tenant_id = ?", scope.chatID, scope.tenantID).First(&chat).Error; err == nil {
+				if id := resolvedDecisionID(chat.TenantDecisionID, chat.DecisionID); id != "" {
+					return id
+				}
 			}
 		}
 	}
 	if scope.tenantID != "" {
-		membershipDAO := dao.NewUserTenantDAO()
-		var membership *entity.UserTenant
-		var err error
-		if scope.userID != "" {
-			membership, err = membershipDAO.FilterByUserIDAndTenantID(ctx, dao.DB, scope.userID, scope.tenantID)
-		} else {
-			membership, err = membershipDAO.GetOwnerByTenantID(ctx, dao.DB, scope.tenantID)
+		if scope.userID == "" || permission.NewDatabaseChecker(dao.DB).CheckTenant(ctx, scope.tenantID, permission.TenantMember) != nil {
+			return ""
 		}
+		membershipDAO := dao.NewUserTenantDAO()
+		membership, err := membershipDAO.FilterByUserIDAndTenantID(ctx, dao.DB, scope.userID, scope.tenantID)
 		if err == nil && membership != nil {
 			if id := resolvedDecisionID(membership.TenantDecisionID, membership.DecisionID); id != "" {
 				return id
@@ -198,6 +206,20 @@ func buildDecisionBackendFromModel(ctx context.Context, scope decisionScope, mod
 	if dao.DB == nil {
 		return nil
 	}
+	if scope.userID == "" || scope.tenantID == "" {
+		common.WarnCtx(ctx, "agentic_rag: decision model requires an authenticated tenant identity, falling back to the env backend",
+			zap.String("model_id", modelID))
+		return nil
+	}
+	if err := permission.NewDatabaseChecker(dao.DB).CheckResource(
+		ctx,
+		permission.ResourceRef{Kind: permission.ResourceKindModel, ID: modelID},
+		permission.OperationUse,
+	); err != nil {
+		common.WarnCtx(ctx, "agentic_rag: configured decision model is not available to this tenant, falling back to the env backend",
+			zap.String("model_id", modelID), zap.Error(err))
+		return nil
+	}
 
 	var model entity.TenantModel
 	if err := dao.DB.Where("id = ? AND status = ?", modelID, "active").First(&model).Error; err != nil {
@@ -216,18 +238,6 @@ func buildDecisionBackendFromModel(ctx context.Context, scope decisionScope, mod
 		common.WarnCtx(ctx, "agentic_rag: decision model instance not found, falling back to the env backend",
 			zap.String("instance_id", model.InstanceID), zap.Error(err))
 		return nil
-	}
-
-	// The model row carries no tenant column, so ownership is checked through
-	// its provider. Skipping the check when the run has no tenant is deliberate:
-	// a CLI or test run has no tenant to match and must not lose its judge.
-	if scope.tenantID != "" {
-		var provider entity.TenantModelProvider
-		if err := dao.DB.Where("id = ?", instance.ProviderID).First(&provider).Error; err != nil || provider.TenantID != scope.tenantID {
-			common.WarnCtx(ctx, "agentic_rag: decision model belongs to another tenant, falling back to the env backend",
-				zap.String("model_id", modelID), zap.String("tenant_id", scope.tenantID))
-			return nil
-		}
 	}
 
 	var extra map[string]string

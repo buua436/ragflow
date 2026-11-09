@@ -101,6 +101,7 @@ func tenantPDFParserFixture(t *testing.T, provider string) (*gorm.DB, string, ch
 	if err := db.AutoMigrate(&entity.UserTenant{}, &entity.TenantModelProvider{}, &entity.TenantModelInstance{}, &entity.TenantModel{}); err != nil {
 		t.Fatal(err)
 	}
+	seedTenantOwnerForModelTest(t, db, "tenant-1", "tenant-1")
 	if err := db.Create(&entity.TenantModelProvider{ID: "provider", ProviderName: provider, UserID: "tenant-1", TenantID: "tenant-1"}).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -355,8 +356,9 @@ func TestTenantPDFParserMissingModelIDInvokeDoesNotFallback(t *testing.T) {
 			if err := db.AutoMigrate(&entity.UserCanvas{}); err != nil {
 				t.Fatal(err)
 			}
+			tenantID := "tenant-1"
 			canvas := entity.UserCanvas{
-				ID: "parser-canvas", UserID: "tenant-1", CanvasCategory: "dataflow_canvas",
+				ID: "parser-canvas", UserID: "tenant-1", TenantID: &tenantID, CanvasCategory: "dataflow_canvas",
 				DSL: entity.JSONMap{"components": map[string]any{
 					"Parser:fixture": map[string]any{"obj": map[string]any{
 						"component_name": "Parser", "params": map[string]any{"pdf": setup},

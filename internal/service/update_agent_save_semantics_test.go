@@ -33,6 +33,7 @@ func seedSaveCanvas(t *testing.T, db *gorm.DB, userID, canvasID string) {
 	}
 	if err := db.Create(&entity.UserCanvas{
 		ID: canvasID, UserID: userID, Title: sptr("Save Agent"), CanvasCategory: "agent_canvas", DSL: entity.JSONMap{},
+		TenantID: sptr(userID),
 	}).Error; err != nil {
 		t.Fatalf("seed canvas: %v", err)
 	}

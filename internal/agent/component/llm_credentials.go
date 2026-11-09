@@ -11,6 +11,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
@@ -123,7 +124,7 @@ func resolveTenantModelInstanceCredentials(ctx context.Context, db *gorm.DB, tid
 		zap.String("model", modelName),
 		zap.String("instance", instanceName))
 
-	owner, ownerErr := dao.NewUserTenantDAO().GetOwnerByTenantID(ctx, db, tid)
+	owner, ownerErr := permission.TenantOwnerMembership(ctx, db, tid)
 	if ownerErr != nil {
 		common.Debug("llm credentials: new-table fallback: tenant owner lookup failed", zap.String("tenant", tid), zap.Error(ownerErr))
 		return "", baseURL, false

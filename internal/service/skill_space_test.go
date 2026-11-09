@@ -61,7 +61,7 @@ func TestUpdateSpaceRejectsWhitespaceOnlyName(t *testing.T) {
 	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "owner-1"); err != nil {
 		t.Fatalf("prepare skill space permission fixture: %v", err)
 	}
-	if err := db.Create(&entity.File{
+	if err := db.Create(&entity.File{UserID: "owner-1",
 		ID:        "folder-1",
 		ParentID:  "skills-root",
 		TenantID:  "tenant-1",
@@ -102,7 +102,7 @@ func TestAsyncDeleteSpaceOutlivesTheRequestContext(t *testing.T) {
 	}
 	pushServiceDB(t, db)
 
-	space := &entity.SkillSpace{
+	space := &entity.SkillSpace{UserID: "owner-1",
 		ID:       "space-1",
 		TenantID: "tenant-1",
 		Name:     "skills",
@@ -149,16 +149,16 @@ func TestAsyncDeleteSpaceDeletesTheFolderAsItsCreator(t *testing.T) {
 	t.Cleanup(func() { factory.SetStorage(previous) })
 
 	for _, file := range []*entity.File{
-		{ID: "skills-root", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "owner-1", Name: "/", Type: "folder"},
-		{ID: "folder-1", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skills", Type: "folder"},
-		{ID: "file-1", ParentID: "folder-1", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skill.md", Type: "doc"},
+		{UserID: "owner-1", ID: "skills-root", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "owner-1", Name: "/", Type: "folder"},
+		{UserID: "member-1", ID: "folder-1", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skills", Type: "folder"},
+		{UserID: "member-1", ID: "file-1", ParentID: "folder-1", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skill.md", Type: "doc"},
 	} {
 		if err := db.Create(file).Error; err != nil {
 			t.Fatalf("create file %s: %v", file.ID, err)
 		}
 	}
 
-	space := &entity.SkillSpace{
+	space := &entity.SkillSpace{UserID: "tenant-1",
 		ID:       "space-1",
 		TenantID: "tenant-1",
 		Name:     "skills",
@@ -226,16 +226,16 @@ func TestAsyncDeleteSpaceRetriesTheFolderLookup(t *testing.T) {
 	t.Cleanup(func() { factory.SetStorage(previous) })
 
 	for _, file := range []*entity.File{
-		{ID: "skills-root", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "owner-1", Name: "/", Type: "folder"},
-		{ID: "folder-1", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skills", Type: "folder"},
-		{ID: "file-1", ParentID: "folder-1", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skill.md", Type: "doc"},
+		{UserID: "owner-1", ID: "skills-root", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "owner-1", Name: "/", Type: "folder"},
+		{UserID: "member-1", ID: "folder-1", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skills", Type: "folder"},
+		{UserID: "member-1", ID: "file-1", ParentID: "folder-1", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skill.md", Type: "doc"},
 	} {
 		if err := db.Create(file).Error; err != nil {
 			t.Fatalf("create file %s: %v", file.ID, err)
 		}
 	}
 
-	space := &entity.SkillSpace{
+	space := &entity.SkillSpace{UserID: "tenant-1",
 		ID:       "space-1",
 		TenantID: "tenant-1",
 		Name:     "skills",
@@ -278,15 +278,15 @@ func TestAsyncDeleteSpaceKeepsTheDeletingStatusWhenTheFolderCreatorCannotBeRead(
 	pushServiceDB(t, db)
 
 	for _, file := range []*entity.File{
-		{ID: "skills-root", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "owner-1", Name: "/", Type: "folder"},
-		{ID: "folder-1", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skills", Type: "folder"},
+		{UserID: "owner-1", ID: "skills-root", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "owner-1", Name: "/", Type: "folder"},
+		{UserID: "member-1", ID: "folder-1", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skills", Type: "folder"},
 	} {
 		if err := db.Create(file).Error; err != nil {
 			t.Fatalf("create file %s: %v", file.ID, err)
 		}
 	}
 
-	space := &entity.SkillSpace{
+	space := &entity.SkillSpace{UserID: "tenant-1",
 		ID:       "space-1",
 		TenantID: "tenant-1",
 		Name:     "skills",
@@ -356,7 +356,7 @@ func TestDeleteSpaceRestartsCleanupLeftInTheDeletingState(t *testing.T) {
 	// The cleanup runs as member-1, the folder creator; the enterprise policy
 	// authorizes that principal through its tenant membership. The owner seeded
 	// above keeps the fixture from promoting member-1 to owner.
-	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "member-1"); err != nil {
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "owner-1", "member-1"); err != nil {
 		t.Fatalf("prepare skill space permission fixture: %v", err)
 	}
 
@@ -366,16 +366,16 @@ func TestDeleteSpaceRestartsCleanupLeftInTheDeletingState(t *testing.T) {
 	t.Cleanup(func() { factory.SetStorage(previous) })
 
 	for _, file := range []*entity.File{
-		{ID: "skills-root", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "owner-1", Name: "/", Type: "folder"},
-		{ID: "folder-1", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skills", Type: "folder"},
-		{ID: "file-1", ParentID: "folder-1", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skill.md", Type: "doc"},
+		{UserID: "owner-1", ID: "skills-root", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "owner-1", Name: "/", Type: "folder"},
+		{UserID: "member-1", ID: "folder-1", ParentID: "skills-root", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skills", Type: "folder"},
+		{UserID: "member-1", ID: "file-1", ParentID: "folder-1", TenantID: "tenant-1", CreatedBy: "member-1", Name: "skill.md", Type: "doc"},
 	} {
 		if err := db.Create(file).Error; err != nil {
 			t.Fatalf("create file %s: %v", file.ID, err)
 		}
 	}
 
-	space := &entity.SkillSpace{
+	space := &entity.SkillSpace{UserID: "owner-1",
 		ID:       "space-1",
 		TenantID: "tenant-1",
 		Name:     "skills",

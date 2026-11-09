@@ -44,7 +44,7 @@ func setupFileTestDB(t *testing.T) *gorm.DB {
 
 func testFile(t *testing.T, db *gorm.DB, id, parentID, tenantID, name, fileType string) {
 	t.Helper()
-	f := &entity.File{
+	f := &entity.File{UserID: tenantID,
 		ID:        id,
 		ParentID:  parentID,
 		TenantID:  tenantID,
@@ -162,9 +162,9 @@ func seedOrderableFiles(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	testFile(t, db, "root", "root", "t1", "/", "folder")
 	files := []entity.File{
-		{ID: "f-1", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "zulu.txt", Type: "doc", BaseModel: entity.BaseModel{CreateTime: int64Ptr(100)}},
-		{ID: "f-2", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "mike.txt", Type: "doc", BaseModel: entity.BaseModel{CreateTime: int64Ptr(200)}},
-		{ID: "f-3", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "alpha.txt", Type: "doc", BaseModel: entity.BaseModel{CreateTime: int64Ptr(300)}},
+		{UserID: "t1", ID: "f-1", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "zulu.txt", Type: "doc", BaseModel: entity.BaseModel{CreateTime: int64Ptr(100)}},
+		{UserID: "t1", ID: "f-2", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "mike.txt", Type: "doc", BaseModel: entity.BaseModel{CreateTime: int64Ptr(200)}},
+		{UserID: "t1", ID: "f-3", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "alpha.txt", Type: "doc", BaseModel: entity.BaseModel{CreateTime: int64Ptr(300)}},
 	}
 	for i := range files {
 		if err := db.Create(&files[i]).Error; err != nil {
@@ -238,10 +238,10 @@ func TestFileDAO_GetByPfID_OrderBySeveralTerms(t *testing.T) {
 	db := setupFileTestDB(t)
 	testFile(t, db, "root", "root", "t1", "/", "folder")
 	files := []entity.File{
-		{ID: "g-1", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "bravo.txt", Type: "doc", BaseModel: entity.BaseModel{CreateTime: int64Ptr(100)}},
-		{ID: "g-2", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "alpha.txt", Type: "doc", BaseModel: entity.BaseModel{CreateTime: int64Ptr(200)}},
-		{ID: "g-3", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "delta.txt", Type: "img", BaseModel: entity.BaseModel{CreateTime: int64Ptr(300)}},
-		{ID: "g-4", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "charlie.txt", Type: "img", BaseModel: entity.BaseModel{CreateTime: int64Ptr(400)}},
+		{UserID: "t1", ID: "g-1", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "bravo.txt", Type: "doc", BaseModel: entity.BaseModel{CreateTime: int64Ptr(100)}},
+		{UserID: "t1", ID: "g-2", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "alpha.txt", Type: "doc", BaseModel: entity.BaseModel{CreateTime: int64Ptr(200)}},
+		{UserID: "t1", ID: "g-3", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "delta.txt", Type: "img", BaseModel: entity.BaseModel{CreateTime: int64Ptr(300)}},
+		{UserID: "t1", ID: "g-4", ParentID: "root", TenantID: "t1", CreatedBy: "t1", Name: "charlie.txt", Type: "img", BaseModel: entity.BaseModel{CreateTime: int64Ptr(400)}},
 	}
 	for i := range files {
 		if err := db.Create(&files[i]).Error; err != nil {

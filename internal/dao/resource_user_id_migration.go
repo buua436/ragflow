@@ -19,80 +19,196 @@ package dao
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"ragflow/internal/entity"
 
 	"gorm.io/gorm"
 )
 
-const resourceUserIDMigrationTargetVersion = "v1.0.0.1"
+const (
+	resourceUserIDMigrationMarker        = "mysql_migration.database.resource_user_id.version"
+	resourceUserIDMigrationTargetVersion = "v1.0.0.2"
+)
 
-// migrateResourceUserIDs fills owner IDs added to resource tables. Existing
-// created_by values identify the resource owner; tables without created_by
-// retain the OSS invariant that tenant_id identifies the owner.
+type resourceUserOwnerCandidate struct {
+	ID             string
+	TenantID       string
+	UserID         string
+	CreatedBy      string `gorm:"column:created_by"`
+	DatasetOwnerID string `gorm:"column:dataset_owner_id"`
+	IsTenantRoot   bool   `gorm:"column:is_tenant_root"`
+}
+
+type resourceUserIDMigration struct {
+	table        string
+	updateTable  string
+	createdBy    bool
+	rootFolders  bool
+	queryDataset bool
+}
+
+// migrateResourceUserIDs repairs legacy resource rows whose user_id contains a
+// tenant ID or is empty. A creator is used only when that user is still an
+// active tenant member; tenant ownership remains an explicit membership lookup.
 func migrateResourceUserIDs(ctx context.Context, db *gorm.DB) error {
-	version, err := GetDatabaseMigrationVersion(ctx, db)
+	scoped := db.WithContext(ctx)
+	if !scoped.Migrator().HasTable(&entity.UserTenant{}) {
+		return nil
+	}
+	version, err := getDatabaseMigrationVersion(ctx, db, resourceUserIDMigrationMarker)
 	if err != nil {
-		return fmt.Errorf("read database migration version: %w", err)
+		return fmt.Errorf("read resource user_id migration version: %w", err)
 	}
 	if shouldSkipMigration(version, resourceUserIDMigrationTargetVersion) {
 		return nil
 	}
-
-	resources := []struct {
-		table          string
-		model          interface{}
-		ownerField     string
-		ownerColumn    string
-		fallbackField  string
-		fallbackColumn string
-	}{
-		{table: "chat_channel", model: &entity.ChatChannel{}, ownerField: "TenantID", ownerColumn: "tenant_id"},
-		{table: "compilation_template_group", model: &entity.CompilationTemplateGroup{}, ownerField: "TenantID", ownerColumn: "tenant_id"},
-		{table: "compilation_template", model: &entity.CompilationTemplate{}, ownerField: "TenantID", ownerColumn: "tenant_id"},
-		{table: "connector", model: &entity.Connector{}, ownerField: "TenantID", ownerColumn: "tenant_id"},
-		{table: "dialog", model: &entity.Chat{}, ownerField: "TenantID", ownerColumn: "tenant_id"},
-		{table: "file", model: &entity.File{}, ownerField: "CreatedBy", ownerColumn: "created_by", fallbackField: "TenantID", fallbackColumn: "tenant_id"},
-		{table: "knowledgebase", model: &entity.Knowledgebase{}, ownerField: "CreatedBy", ownerColumn: "created_by", fallbackField: "TenantID", fallbackColumn: "tenant_id"},
-		{table: "memory", model: &entity.Memory{}, ownerField: "TenantID", ownerColumn: "tenant_id"},
-		{table: "search", model: &entity.Search{}, ownerField: "CreatedBy", ownerColumn: "created_by", fallbackField: "TenantID", fallbackColumn: "tenant_id"},
-		{table: "mcp_server", model: &entity.MCPServer{}, ownerField: "TenantID", ownerColumn: "tenant_id"},
-		{table: "skill_spaces", model: &entity.SkillSpace{}, ownerField: "TenantID", ownerColumn: "tenant_id"},
-		{table: "document", model: &entity.Document{}, ownerField: "CreatedBy", ownerColumn: "created_by"},
-		{table: "evaluation_datasets", model: &entity.EvaluationDataset{}, ownerField: "CreatedBy", ownerColumn: "created_by", fallbackField: "TenantID", fallbackColumn: "tenant_id"},
+	if err := migrateUserCanvasTenantID(ctx, db); err != nil {
+		return err
 	}
 
-	scoped := db.WithContext(ctx)
-	migrator := scoped.Migrator()
-	for _, resource := range resources {
-		if !migrator.HasTable(resource.model) {
-			continue
-		}
-		if !migrator.HasColumn(resource.model, "UserID") {
-			return fmt.Errorf("%s.user_id is missing after GORM migration", resource.table)
-		}
-		if !migrator.HasColumn(resource.model, resource.ownerField) {
-			return fmt.Errorf("%s.%s is missing", resource.table, resource.ownerColumn)
-		}
-		if resource.fallbackField != "" && !migrator.HasColumn(resource.model, resource.fallbackField) {
-			return fmt.Errorf("%s.%s is missing", resource.table, resource.fallbackColumn)
-		}
+	migrations := []resourceUserIDMigration{
+		{table: "knowledgebase", updateTable: "knowledgebase", createdBy: true},
+		{table: "dialog", updateTable: "dialog"},
+		{table: "search", updateTable: "search", createdBy: true},
+		{table: "user_canvas", updateTable: "user_canvas"},
+		{table: "memory", updateTable: "memory"},
+		{table: "file", updateTable: "file", createdBy: true, rootFolders: true},
+		{table: "mcp_server", updateTable: "mcp_server"},
+		{table: "connector", updateTable: "connector"},
+		{table: "chat_channel", updateTable: "chat_channel"},
+		{table: "tenant_model_provider", updateTable: "tenant_model_provider"},
+		{table: "compilation_template_group", updateTable: "compilation_template_group"},
+		{table: "compilation_template", updateTable: "compilation_template"},
+		{table: "skill_spaces", updateTable: "skill_spaces"},
+		{table: "evaluation_datasets", updateTable: "evaluation_datasets", createdBy: true},
+		{table: "document AS resource_rows JOIN knowledgebase AS tenant_rows ON tenant_rows.id = resource_rows.kb_id", updateTable: "document", createdBy: true, queryDataset: true},
+	}
 
-		ownerExpr := fmt.Sprintf("NULLIF(%s, '')", resource.ownerColumn)
-		if resource.fallbackColumn != "" {
-			ownerExpr = fmt.Sprintf("COALESCE(%s, NULLIF(%s, ''), '')", ownerExpr, resource.fallbackColumn)
-		} else {
-			ownerExpr = fmt.Sprintf("COALESCE(%s, '')", ownerExpr)
+	return scoped.Transaction(func(tx *gorm.DB) error {
+		migrator := tx.Migrator()
+		for _, migration := range migrations {
+			tableName := strings.Fields(migration.table)[0]
+			if !migrator.HasTable(tableName) || !migrator.HasColumn(tableName, "id") ||
+				!migrator.HasColumn(tableName, "user_id") {
+				continue
+			}
+			if migration.queryDataset {
+				if !migrator.HasTable("knowledgebase") || !migrator.HasColumn("document", "kb_id") || !migrator.HasColumn("document", "created_by") {
+					continue
+				}
+			} else if !migrator.HasColumn(tableName, "tenant_id") {
+				continue
+			}
+			if migration.createdBy && !migrator.HasColumn(tableName, "created_by") {
+				continue
+			}
+			if err := migrateResourceUserIDsInTable(ctx, tx, migration); err != nil {
+				return err
+			}
 		}
+		if err := setDatabaseMigrationVersionForMarker(ctx, tx, resourceUserIDMigrationMarker, resourceUserIDMigrationTargetVersion); err != nil {
+			return fmt.Errorf("mark resource user_id migration version %s: %w", resourceUserIDMigrationTargetVersion, err)
+		}
+		return nil
+	})
+}
 
-		if err := scoped.Table(resource.table).
-			Where("user_id IS NULL OR user_id = ?", "").
-			UpdateColumn("user_id", gorm.Expr(ownerExpr)).Error; err != nil {
-			return fmt.Errorf("backfill %s.user_id from %s: %w", resource.table, resource.ownerColumn, err)
+func migrateResourceUserIDsInTable(ctx context.Context, tx *gorm.DB, migration resourceUserIDMigration) error {
+	query := tx.WithContext(ctx)
+	selectFields := "resource_rows.id, resource_rows.tenant_id, resource_rows.user_id"
+	if migration.queryDataset {
+		selectFields = "resource_rows.id, tenant_rows.tenant_id, resource_rows.user_id, resource_rows.created_by, tenant_rows.user_id AS dataset_owner_id, 0 AS is_tenant_root"
+	} else if migration.createdBy {
+		selectFields += ", resource_rows.created_by"
+	} else {
+		selectFields += ", '' AS created_by"
+	}
+	if migration.rootFolders {
+		selectFields += ", CASE WHEN resource_rows.parent_id = resource_rows.id AND resource_rows.type = 'folder' THEN 1 ELSE 0 END AS is_tenant_root"
+	} else if !migration.queryDataset {
+		selectFields += ", 0 AS is_tenant_root"
+	}
+	queryTable := migration.table
+	if !migration.queryDataset {
+		queryTable += " AS resource_rows"
+	}
+	query = query.Table(queryTable).Select(selectFields)
+	if migration.queryDataset {
+		query = query.Where(`tenant_rows.tenant_id IS NOT NULL AND tenant_rows.tenant_id <> '' AND NOT EXISTS (
+			SELECT 1 FROM user_tenant active_membership
+			WHERE active_membership.tenant_id = tenant_rows.tenant_id
+			  AND active_membership.user_id = resource_rows.user_id
+			  AND active_membership.status = ?
+		)`, string(entity.StatusValid))
+	} else {
+		rootClause := ""
+		if migration.rootFolders {
+			rootClause = " OR (resource_rows.parent_id = resource_rows.id AND resource_rows.type = 'folder')"
+		}
+		query = query.Where(`resource_rows.tenant_id IS NOT NULL AND resource_rows.tenant_id <> '' AND (
+			NOT EXISTS (
+				SELECT 1 FROM user_tenant active_membership
+				WHERE active_membership.tenant_id = resource_rows.tenant_id
+				  AND active_membership.user_id = resource_rows.user_id
+				  AND active_membership.status = ?
+			)`+rootClause+`
+		)`, string(entity.StatusValid))
+	}
+	const batchSize = 500
+	lastID := ""
+	for {
+		batch := make([]resourceUserOwnerCandidate, 0, batchSize)
+		batchQuery := query.Session(&gorm.Session{Initialized: true}).Order("resource_rows.id ASC").Limit(batchSize)
+		if lastID != "" {
+			batchQuery = batchQuery.Where("resource_rows.id > ?", lastID)
+		}
+		if err := batchQuery.Find(&batch).Error; err != nil {
+			return fmt.Errorf("load legacy resource owners from %s: %w", migration.table, err)
+		}
+		if len(batch) == 0 {
+			return nil
+		}
+		tenantIDs := make([]string, 0, len(batch))
+		for _, candidate := range batch {
+			tenantIDs = append(tenantIDs, candidate.TenantID)
+		}
+		owners, err := activeTenantOwnerUserIDs(ctx, tx, tenantIDs)
+		if err != nil {
+			return fmt.Errorf("resolve owners for legacy resources in %s: %w", migration.table, err)
+		}
+		var memberships []entity.UserTenant
+		if err := tx.WithContext(ctx).Select("user_id", "tenant_id").
+			Where("tenant_id IN ? AND status = ?", tenantIDs, string(entity.StatusValid)).Find(&memberships).Error; err != nil {
+			return fmt.Errorf("load active memberships for legacy resources in %s: %w", migration.table, err)
+		}
+		activeUsers := make(map[string]map[string]struct{}, len(tenantIDs))
+		for _, membership := range memberships {
+			if activeUsers[membership.TenantID] == nil {
+				activeUsers[membership.TenantID] = make(map[string]struct{})
+			}
+			activeUsers[membership.TenantID][membership.UserID] = struct{}{}
+		}
+		for _, candidate := range batch {
+			ownerUserID := owners[candidate.TenantID]
+			if !candidate.IsTenantRoot {
+				if _, ok := activeUsers[candidate.TenantID][strings.TrimSpace(candidate.CreatedBy)]; ok {
+					ownerUserID = strings.TrimSpace(candidate.CreatedBy)
+				} else if _, ok := activeUsers[candidate.TenantID][strings.TrimSpace(candidate.DatasetOwnerID)]; ok {
+					ownerUserID = strings.TrimSpace(candidate.DatasetOwnerID)
+				}
+			}
+			if ownerUserID == "" {
+				return fmt.Errorf("resource %s/%s has no active tenant owner to repair user_id", migration.table, candidate.ID)
+			}
+			if err := tx.WithContext(ctx).Table(migration.updateTable).
+				Where("id = ?", candidate.ID).UpdateColumn("user_id", ownerUserID).Error; err != nil {
+				return fmt.Errorf("backfill %s.user_id for resource %s: %w", migration.updateTable, candidate.ID, err)
+			}
+		}
+		lastID = batch[len(batch)-1].ID
+		if len(batch) < batchSize {
+			return nil
 		}
 	}
-	if err := setDatabaseMigrationVersion(ctx, db, resourceUserIDMigrationTargetVersion); err != nil {
-		return fmt.Errorf("mark database migration version %s: %w", resourceUserIDMigrationTargetVersion, err)
-	}
-	return nil
 }

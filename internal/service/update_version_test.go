@@ -76,7 +76,9 @@ func TestUpdateVersion_CrossCanvasRejected(t *testing.T) {
 	if err := db.AutoMigrate(&entity.UserCanvas{}); err != nil {
 		t.Fatalf("migrate canvas: %v", err)
 	}
-	other := &entity.UserCanvas{ID: otherCanvasID, UserID: userID, CanvasCategory: "dataflow_canvas", Permission: "me", DSL: entity.JSONMap{"graph": "legacy"}}
+	other := &entity.UserCanvas{ID: otherCanvasID, UserID: userID, CanvasCategory: "dataflow_canvas", Permission: "me", DSL: entity.JSONMap{"graph": "legacy"},
+		TenantID: sptr(userID),
+	}
 	if err := db.Create(other).Error; err != nil {
 		t.Fatalf("seed other canvas: %v", err)
 	}

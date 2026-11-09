@@ -56,9 +56,9 @@ func pushDocDB(t *testing.T, testDB *gorm.DB) {
 func TestDocumentGetByIDs_Success(t *testing.T) {
 	db := setupDocumentTestDB(t)
 
-	db.Create(&entity.Document{ID: "doc1", KbID: "kb1", Name: sp("Doc 1"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}})
-	db.Create(&entity.Document{ID: "doc2", KbID: "kb1", Name: sp("Doc 2"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}})
-	db.Create(&entity.Document{ID: "doc3", KbID: "kb2", Name: sp("Doc 3"), CreatedBy: "user2", ParserConfig: entity.JSONMap{}})
+	db.Create(&entity.Document{UserID: "user1", ID: "doc1", KbID: "kb1", Name: sp("Doc 1"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}})
+	db.Create(&entity.Document{UserID: "user1", ID: "doc2", KbID: "kb1", Name: sp("Doc 2"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}})
+	db.Create(&entity.Document{UserID: "user2", ID: "doc3", KbID: "kb2", Name: sp("Doc 3"), CreatedBy: "user2", ParserConfig: entity.JSONMap{}})
 
 	ctx := t.Context()
 	dao := NewDocumentDAO()
@@ -108,7 +108,7 @@ func TestDocumentGetByIDs_NilIDs(t *testing.T) {
 func TestDocumentGetByIDs_NoMatch(t *testing.T) {
 	db := setupDocumentTestDB(t)
 
-	db.Create(&entity.Document{ID: "doc1", KbID: "kb1", Name: sp("Doc 1"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}})
+	db.Create(&entity.Document{UserID: "user1", ID: "doc1", KbID: "kb1", Name: sp("Doc 1"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}})
 	ctx := t.Context()
 	dao := NewDocumentDAO()
 	docs, err := dao.GetByIDs(ctx, db, []string{"nonexistent"})
@@ -126,9 +126,9 @@ func TestDocumentGetByKBIDOrdersByCreateTime(t *testing.T) {
 	createTime10 := int64(10)
 	createTime20 := int64(20)
 	createTime30 := int64(30)
-	db.Create(&entity.Document{ID: "doc-later", KbID: "kb1", Name: sp("Doc Later"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}, BaseModel: entity.BaseModel{CreateTime: &createTime30}})
-	db.Create(&entity.Document{ID: "doc-other", KbID: "kb2", Name: sp("Doc Other"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}, BaseModel: entity.BaseModel{CreateTime: &createTime10}})
-	db.Create(&entity.Document{ID: "doc-earlier", KbID: "kb1", Name: sp("Doc Earlier"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}, BaseModel: entity.BaseModel{CreateTime: &createTime20}})
+	db.Create(&entity.Document{UserID: "user1", ID: "doc-later", KbID: "kb1", Name: sp("Doc Later"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}, BaseModel: entity.BaseModel{CreateTime: &createTime30}})
+	db.Create(&entity.Document{UserID: "user1", ID: "doc-other", KbID: "kb2", Name: sp("Doc Other"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}, BaseModel: entity.BaseModel{CreateTime: &createTime10}})
+	db.Create(&entity.Document{UserID: "user1", ID: "doc-earlier", KbID: "kb1", Name: sp("Doc Earlier"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}, BaseModel: entity.BaseModel{CreateTime: &createTime20}})
 	ctx := t.Context()
 	dao := NewDocumentDAO()
 	docs, total, err := dao.GetByKBID(ctx, db, "kb1")
@@ -157,7 +157,7 @@ func TestDocumentListIncludesScheduledIngestionStatus(t *testing.T) {
 	); err != nil {
 		t.Fatalf("migrate document-list dependencies: %v", err)
 	}
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "user-1",
 		ID:           "doc-scheduled",
 		KbID:         "kb-1",
 		ParserID:     "naive",
@@ -170,7 +170,7 @@ func TestDocumentListIncludesScheduledIngestionStatus(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("create document: %v", err)
 	}
-	if err := db.Create(&entity.File{
+	if err := db.Create(&entity.File{UserID: "user-1",
 		ID:        "file-scheduled",
 		ParentID:  "parent-1",
 		TenantID:  "tenant-1",
@@ -283,7 +283,7 @@ func TestDocumentListFallsBackToReadOnlyLegacyRun(t *testing.T) {
 		}
 	}
 	fileID := "file-legacy"
-	create(&entity.File{ID: fileID, ParentID: "parent-1", TenantID: "tenant-1", CreatedBy: "user-1", Name: "legacy.pdf", Type: "document"})
+	create(&entity.File{UserID: "user-1", ID: fileID, ParentID: "parent-1", TenantID: "tenant-1", CreatedBy: "user-1", Name: "legacy.pdf", Type: "document"})
 	for _, test := range tests {
 		documentID := "doc-" + test.id
 		create(&entity.Document{ID: documentID, KbID: "kb-legacy", ParserConfig: entity.JSONMap{}})
@@ -410,7 +410,7 @@ func TestDocumentListDeduplicatesHistoricalIngestionTasks(t *testing.T) {
 		t.Fatalf("drop ingestion task unique index: %v", err)
 	}
 
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "user-1",
 		ID:           "doc-duplicate-tasks",
 		KbID:         "kb-1",
 		ParserID:     "naive",
@@ -423,7 +423,7 @@ func TestDocumentListDeduplicatesHistoricalIngestionTasks(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("create document: %v", err)
 	}
-	if err := db.Create(&entity.File{
+	if err := db.Create(&entity.File{UserID: "user-1",
 		ID:        "file-duplicate-tasks",
 		ParentID:  "parent-1",
 		TenantID:  "tenant-1",
@@ -487,8 +487,8 @@ func TestDocumentListDeduplicatesHistoricalIngestionTasks(t *testing.T) {
 func TestDocumentGetByDocumentIDAndDatasetIDUsesKBID(t *testing.T) {
 	db := setupDocumentTestDB(t)
 
-	db.Create(&entity.Document{ID: "doc1", KbID: "kb1", Name: sp("Doc 1"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}})
-	db.Create(&entity.Document{ID: "doc1-other", KbID: "kb2", Name: sp("Doc 2"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}})
+	db.Create(&entity.Document{UserID: "user1", ID: "doc1", KbID: "kb1", Name: sp("Doc 1"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}})
+	db.Create(&entity.Document{UserID: "user1", ID: "doc1-other", KbID: "kb2", Name: sp("Doc 2"), CreatedBy: "user1", ParserConfig: entity.JSONMap{}})
 	ctx := t.Context()
 	dao := NewDocumentDAO()
 	doc, err := dao.GetByDocumentIDAndDatasetID(ctx, db, "doc1", "kb1")
@@ -517,7 +517,7 @@ func TestDocumentGetChunkingConfigScansParserConfig(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("create owner membership: %v", err)
 	}
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "user1",
 		ID:           "kb1",
 		TenantID:     "tenant1",
 		Name:         "Dataset 1",
@@ -530,7 +530,7 @@ func TestDocumentGetChunkingConfigScansParserConfig(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("create knowledgebase: %v", err)
 	}
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "user1",
 		ID:           "doc1",
 		KbID:         "kb1",
 		ParserID:     "naive",

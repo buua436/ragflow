@@ -56,8 +56,8 @@ func TestUpdateMCPServerRejectsDuplicatedName(t *testing.T) {
 
 	const tenantID = "tenant-1"
 	for _, srv := range []*entity.MCPServer{
-		{ID: "mcp-1", Name: "alpha", TenantID: tenantID, URL: "http://example.com/sse", ServerType: mcpServerTypeSSE},
-		{ID: "mcp-2", Name: "beta", TenantID: tenantID, URL: "http://example.com/sse", ServerType: mcpServerTypeSSE},
+		{UserID: tenantID, ID: "mcp-1", Name: "alpha", TenantID: tenantID, URL: "http://example.com/sse", ServerType: mcpServerTypeSSE},
+		{UserID: tenantID, ID: "mcp-2", Name: "beta", TenantID: tenantID, URL: "http://example.com/sse", ServerType: mcpServerTypeSSE},
 	} {
 		if err := testDB.Create(srv).Error; err != nil {
 			t.Fatalf("create mcp server: %v", err)
@@ -517,9 +517,9 @@ func TestListMCPServersAppliesAuthorizationBeforeSQLPagination(t *testing.T) {
 	pushServiceDB(t, db)
 	addMCPOwnerMembership(t, db, "owner", "tenant-1")
 	for _, server := range []*entity.MCPServer{
-		{ID: "mcp-c", TenantID: "tenant-1", Name: "charlie", URL: "https://example.test/c", ServerType: mcpServerTypeSSE},
-		{ID: "mcp-a", TenantID: "tenant-1", Name: "alpha", URL: "https://example.test/a", ServerType: mcpServerTypeSSE},
-		{ID: "mcp-b", TenantID: "tenant-1", Name: "bravo", URL: "https://example.test/b", ServerType: mcpServerTypeSSE},
+		{UserID: "owner", ID: "mcp-c", TenantID: "tenant-1", Name: "charlie", URL: "https://example.test/c", ServerType: mcpServerTypeSSE},
+		{UserID: "owner", ID: "mcp-a", TenantID: "tenant-1", Name: "alpha", URL: "https://example.test/a", ServerType: mcpServerTypeSSE},
+		{UserID: "owner", ID: "mcp-b", TenantID: "tenant-1", Name: "bravo", URL: "https://example.test/b", ServerType: mcpServerTypeSSE},
 	} {
 		if err := db.Create(server).Error; err != nil {
 			t.Fatalf("create MCP server %q: %v", server.ID, err)

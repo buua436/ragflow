@@ -126,7 +126,9 @@ func TestGetAgentLogs_E2EViaMiniredis(t *testing.T) {
 	}
 	ctx = permission.WithIdentity(ctx, "u1", "u1")
 
-	db.Create(&entity.UserCanvas{ID: "c1", UserID: "u1", Title: sptr("Test")})
+	db.Create(&entity.UserCanvas{ID: "c1", UserID: "u1", Title: sptr("Test"),
+		TenantID: sptr("u1"),
+	})
 
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -260,7 +262,9 @@ func TestGetAgentLogs_EndSignalCompletion(t *testing.T) {
 	}
 	ctx = permission.WithIdentity(ctx, "u1", "u1")
 
-	db.Create(&entity.UserCanvas{ID: "c1", UserID: "u1", Title: sptr("Test")})
+	db.Create(&entity.UserCanvas{ID: "c1", UserID: "u1", Title: sptr("Test"),
+		TenantID: sptr("u1"),
+	})
 
 	mr, err := miniredis.Run()
 	if err != nil {
@@ -658,7 +662,9 @@ func TestRunCanvasPipelineDebug_WriteThenReadViaMiniredis(t *testing.T) {
 		t.Fatalf("prepare agent log permission fixture: %v", err)
 	}
 	ctx = permission.WithIdentity(ctx, "u1", "u1")
-	db.Create(&entity.UserCanvas{ID: "c1", UserID: "u1", Title: sptr("Test")})
+	db.Create(&entity.UserCanvas{ID: "c1", UserID: "u1", Title: sptr("Test"),
+		TenantID: sptr("u1"),
+	})
 
 	mr, err := miniredis.Run()
 	if err != nil {

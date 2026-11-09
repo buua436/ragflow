@@ -253,7 +253,7 @@ func TestRetrieval_LegacyQueryStringNormalized(t *testing.T) {
 		t.Fatalf("prepare permission fixture: %v", err)
 	}
 
-	if err = db.Create(&entity.Knowledgebase{
+	if err = db.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID:         "kb-da1",
 		Name:       "da1",
 		TenantID:   "tenant-1",
@@ -319,7 +319,7 @@ func TestRetrieval_StructuredUserFillInputNormalized(t *testing.T) {
 	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "user-1"); err != nil {
 		t.Fatalf("prepare permission fixture: %v", err)
 	}
-	if err = db.Create(&entity.Knowledgebase{
+	if err = db.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID:         "kb-da1",
 		Name:       "da1",
 		TenantID:   "tenant-1",
@@ -376,7 +376,7 @@ func TestRetrieval_ResolveDatasetIDByTenantName(t *testing.T) {
 	dao.DB = db
 	t.Cleanup(func() { dao.DB = origDB })
 
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID:         "kb-da1",
 		Name:       "da1",
 		TenantID:   "tenant-1",
@@ -427,7 +427,7 @@ func TestRetrieval_ResolveDatasetIDByUserPermission(t *testing.T) {
 			if tc.visibility == string(entity.TenantPermissionMe) {
 				datasetID = "kb-private"
 			}
-			dataset := entity.Knowledgebase{
+			dataset := entity.Knowledgebase{UserID: "owner",
 				ID: datasetID, Name: "named-dataset", TenantID: "tenant-1", EmbdID: "embedding",
 				Permission: tc.visibility, CreatedBy: "owner", Status: &status,
 			}

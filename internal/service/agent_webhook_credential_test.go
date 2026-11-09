@@ -35,7 +35,7 @@ func TestAgentWebhookCredentialUsesBoundPrincipalAndCanBeRotated(t *testing.T) {
 	if err := db.Create(canvas).Error; err != nil {
 		t.Fatalf("seed canvas: %v", err)
 	}
-	if err := testsupport.PrepareEnterprisePermissionFixture(db, tenantID, "caller-1", "owner-1"); err != nil {
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, tenantID, "owner-1", "caller-1"); err != nil {
 		t.Fatalf("prepare webhook permission fixture: %v", err)
 	}
 

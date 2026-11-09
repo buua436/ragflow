@@ -20,7 +20,7 @@ import (
 
 func TestFileService_CreateFolder_RejectsSlashInName(t *testing.T) {
 	svc := testFileService()
-	ctx := permission.WithIdentity(context.Background(), "tenant1", "")
+	ctx := permission.WithIdentity(context.Background(), "tenant1", "tenant1")
 	for _, name := range []string{"/", "a/b", "dir/sub/"} {
 		_, err := svc.CreateFolder(ctx, name, "pf1", FileTypeFolder)
 		if err == nil || !strings.Contains(err.Error(), `cannot contain "/"`) {
@@ -32,7 +32,7 @@ func TestFileService_CreateFolder_RejectsSlashInName(t *testing.T) {
 func TestFileService_CreateFolderDedupesDuplicateName(t *testing.T) {
 	setupFolderTestDB(t)
 
-	parent := &entity.File{ID: "pf1", ParentID: "pf1", TenantID: "tenant-1", Name: "root", Type: FileTypeFolder}
+	parent := &entity.File{UserID: "tenant-1", ID: "pf1", ParentID: "pf1", TenantID: "tenant-1", Name: "root", Type: FileTypeFolder}
 	if err := dao.DB.Create(parent).Error; err != nil {
 		t.Fatalf("seed parent folder: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestFileService_CreateFolderRecordsRequesterAsOwner(t *testing.T) {
 			t.Fatalf("create membership: %v", err)
 		}
 	}
-	if err := db.Create(&entity.File{ID: "root", ParentID: "root", TenantID: "owner", CreatedBy: "owner", Name: "/", Type: FileTypeFolder}).Error; err != nil {
+	if err := db.Create(&entity.File{UserID: "owner", ID: "root", ParentID: "root", TenantID: "owner", CreatedBy: "owner", Name: "/", Type: FileTypeFolder}).Error; err != nil {
 		t.Fatalf("create root folder: %v", err)
 	}
 
@@ -122,7 +122,7 @@ func firstCreatedFolderName(t *testing.T, svc *FileService, ctx context.Context,
 func TestFileService_MoveFiles_RejectsSlashInNewName(t *testing.T) {
 	db := setupFolderTestDB(t)
 
-	folder := &entity.File{ID: "f1", ParentID: "pf1", TenantID: "tenant1", Name: "old", Type: FileTypeFolder}
+	folder := &entity.File{UserID: "tenant1", ID: "f1", ParentID: "pf1", TenantID: "tenant1", Name: "old", Type: FileTypeFolder}
 	if err := db.Create(folder).Error; err != nil {
 		t.Fatalf("seed folder: %v", err)
 	}
@@ -137,10 +137,10 @@ func TestFileService_MoveFiles_RejectsSlashInNewName(t *testing.T) {
 func TestFileService_MoveFilesRejectsDuplicateName(t *testing.T) {
 	setupFolderTestDB(t)
 
-	if err := dao.DB.Create(&entity.File{ID: "t1", ParentID: "pf1", TenantID: "tenant-1", Name: "target", Type: FileTypeFolder}).Error; err != nil {
+	if err := dao.DB.Create(&entity.File{UserID: "tenant-1", ID: "t1", ParentID: "pf1", TenantID: "tenant-1", Name: "target", Type: FileTypeFolder}).Error; err != nil {
 		t.Fatalf("seed target folder: %v", err)
 	}
-	if err := dao.DB.Create(&entity.File{ID: "s1", ParentID: "pf1", TenantID: "tenant-1", Name: "source", Type: FileTypeFolder}).Error; err != nil {
+	if err := dao.DB.Create(&entity.File{UserID: "tenant-1", ID: "s1", ParentID: "pf1", TenantID: "tenant-1", Name: "source", Type: FileTypeFolder}).Error; err != nil {
 		t.Fatalf("seed source folder: %v", err)
 	}
 
@@ -163,10 +163,10 @@ func TestFileService_MoveFilesRejectsCaseVariantDuplicateInDestinationFolder(t *
 	setupFolderTestDB(t)
 
 	for _, f := range []*entity.File{
-		{ID: "pf1", ParentID: "pf1", TenantID: "tenant-1", Name: "root", Type: FileTypeFolder},
-		{ID: "d1", ParentID: "pf1", TenantID: "tenant-1", Name: "dest", Type: FileTypeFolder},
-		{ID: "s1", ParentID: "pf1", TenantID: "tenant-1", Name: "report.txt", Type: "pdf"},
-		{ID: "existing", ParentID: "d1", TenantID: "tenant-1", Name: "report.txt", Type: "pdf"},
+		{UserID: "tenant-1", ID: "pf1", ParentID: "pf1", TenantID: "tenant-1", Name: "root", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "d1", ParentID: "pf1", TenantID: "tenant-1", Name: "dest", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "s1", ParentID: "pf1", TenantID: "tenant-1", Name: "report.txt", Type: "pdf"},
+		{UserID: "tenant-1", ID: "existing", ParentID: "d1", TenantID: "tenant-1", Name: "report.txt", Type: "pdf"},
 	} {
 		if err := dao.DB.Create(f).Error; err != nil {
 			t.Fatalf("seed %s: %v", f.ID, err)
@@ -186,10 +186,10 @@ func TestFileService_MoveFilesRejectsCaseVariantDuplicateWithoutRename(t *testin
 	setupFolderTestDB(t)
 
 	for _, f := range []*entity.File{
-		{ID: "pf1", ParentID: "pf1", TenantID: "tenant-1", Name: "root", Type: FileTypeFolder},
-		{ID: "d1", ParentID: "pf1", TenantID: "tenant-1", Name: "dest", Type: FileTypeFolder},
-		{ID: "s1", ParentID: "pf1", TenantID: "tenant-1", Name: "report.txt", Type: "pdf"},
-		{ID: "existing", ParentID: "d1", TenantID: "tenant-1", Name: "REPORT.TXT", Type: "pdf"},
+		{UserID: "tenant-1", ID: "pf1", ParentID: "pf1", TenantID: "tenant-1", Name: "root", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "d1", ParentID: "pf1", TenantID: "tenant-1", Name: "dest", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "s1", ParentID: "pf1", TenantID: "tenant-1", Name: "report.txt", Type: "pdf"},
+		{UserID: "tenant-1", ID: "existing", ParentID: "d1", TenantID: "tenant-1", Name: "REPORT.TXT", Type: "pdf"},
 	} {
 		if err := dao.DB.Create(f).Error; err != nil {
 			t.Fatalf("seed %s: %v", f.ID, err)
@@ -235,15 +235,43 @@ func setupFolderTestDB(t *testing.T) *gorm.DB {
 func fileTestContext(t *testing.T, userID, tenantID string, memberIDs ...string) context.Context {
 	t.Helper()
 	members := append([]string{userID}, memberIDs...)
-	if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, tenantID, members...); err != nil {
+	ownerUserID := userID
+	var owner entity.UserTenant
+	if err := dao.DB.Where("tenant_id = ? AND role = ? AND status = ?", tenantID, string(permission.RoleOwner), entity.TenantMembershipStatusJoined).Take(&owner).Error; err == nil {
+		ownerUserID = owner.UserID
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("load test tenant owner: %v", err)
+	}
+	if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, tenantID, ownerUserID, members...); err != nil {
 		t.Fatalf("prepare permission fixture: %v", err)
+	}
+	valid := string(entity.StatusValid)
+	ensureMembership := func(memberID, role string) {
+		var count int64
+		if err := dao.DB.Model(&entity.UserTenant{}).
+			Where("user_id = ? AND tenant_id = ? AND status = ?", memberID, tenantID, valid).
+			Count(&count).Error; err != nil {
+			t.Fatalf("check test membership: %v", err)
+		}
+		if count > 0 {
+			return
+		}
+		if err := dao.DB.Create(&entity.UserTenant{
+			ID: common.GenerateToken(), UserID: memberID, TenantID: tenantID, Role: role, Status: &valid,
+		}).Error; err != nil {
+			t.Fatalf("create test membership for %s: %v", memberID, err)
+		}
+	}
+	ensureMembership("test-owner-"+tenantID, string(permission.RoleOwner))
+	for _, memberID := range members {
+		ensureMembership(memberID, string(permission.RoleNormal))
 	}
 	return permission.WithIdentity(t.Context(), userID, tenantID)
 }
 
 func insertFolderTestFile(t *testing.T, id, parentID, name string) {
 	t.Helper()
-	f := &entity.File{
+	f := &entity.File{UserID: "tenant-1",
 		ID:        id,
 		ParentID:  parentID,
 		TenantID:  "tenant-1",
@@ -260,7 +288,7 @@ func insertFolderTestFile(t *testing.T, id, parentID, name string) {
 func TestFileService_ListFilesMissingParentReturnsNotFound(t *testing.T) {
 	setupFolderTestDB(t)
 
-	root := &entity.File{ID: "root-1", ParentID: "root-1", TenantID: "tenant-1", Name: "/", Type: FileTypeFolder}
+	root := &entity.File{UserID: "tenant-1", ID: "root-1", ParentID: "root-1", TenantID: "tenant-1", Name: "/", Type: FileTypeFolder}
 	if err := dao.DB.Create(root).Error; err != nil {
 		t.Fatalf("seed root: %v", err)
 	}
@@ -343,7 +371,7 @@ func TestFileService_GetFileContentRejectsInaccessibleFile(t *testing.T) {
 
 func TestFileService_ListFilesRejectsInaccessibleParent(t *testing.T) {
 	setupFolderTestDB(t)
-	foreignFolder := &entity.File{ID: "foreign-root", ParentID: "foreign-root", TenantID: "user-2", Name: "/", Type: FileTypeFolder}
+	foreignFolder := &entity.File{UserID: "user-2", ID: "foreign-root", ParentID: "foreign-root", TenantID: "user-2", Name: "/", Type: FileTypeFolder}
 	if err := dao.DB.Create(foreignFolder).Error; err != nil {
 		t.Fatalf("seed foreign folder: %v", err)
 	}
@@ -356,7 +384,7 @@ func TestFileService_ListFilesRejectsInaccessibleParent(t *testing.T) {
 
 func TestFileService_CreateFolderRejectsInaccessibleParent(t *testing.T) {
 	setupFolderTestDB(t)
-	foreignFolder := &entity.File{ID: "foreign-root", ParentID: "foreign-root", TenantID: "user-2", Name: "/", Type: FileTypeFolder}
+	foreignFolder := &entity.File{UserID: "user-2", ID: "foreign-root", ParentID: "foreign-root", TenantID: "user-2", Name: "/", Type: FileTypeFolder}
 	if err := dao.DB.Create(foreignFolder).Error; err != nil {
 		t.Fatalf("seed foreign folder: %v", err)
 	}
@@ -376,7 +404,7 @@ func TestFileService_CreateFolderRejectsInaccessibleParent(t *testing.T) {
 
 func TestFileService_MoveFilesRejectsInaccessibleSource(t *testing.T) {
 	db := setupFolderTestDB(t)
-	foreignFile := &entity.File{ID: "foreign-file", ParentID: "foreign-root", TenantID: "user-2", Name: "private.pdf", Type: "pdf"}
+	foreignFile := &entity.File{UserID: "user-2", ID: "foreign-file", ParentID: "foreign-root", TenantID: "user-2", Name: "private.pdf", Type: "pdf"}
 	if err := db.Create(foreignFile).Error; err != nil {
 		t.Fatalf("seed foreign file: %v", err)
 	}
@@ -397,7 +425,7 @@ func TestFileService_MoveFilesRejectsInaccessibleSource(t *testing.T) {
 func TestFileService_MoveFilesRejectsInaccessibleDestination(t *testing.T) {
 	db := setupFolderTestDB(t)
 	insertFolderTestFile(t, "file-1", "root", "report.pdf")
-	foreignFolder := &entity.File{ID: "foreign-folder", ParentID: "foreign-root", TenantID: "user-2", Name: "private", Type: FileTypeFolder}
+	foreignFolder := &entity.File{UserID: "user-2", ID: "foreign-folder", ParentID: "foreign-root", TenantID: "user-2", Name: "private", Type: FileTypeFolder}
 	if err := db.Create(foreignFolder).Error; err != nil {
 		t.Fatalf("seed foreign folder: %v", err)
 	}
@@ -417,7 +445,7 @@ func TestFileService_MoveFilesRejectsInaccessibleDestination(t *testing.T) {
 
 func TestFileService_UploadRejectsInaccessibleParent(t *testing.T) {
 	db := setupFolderTestDB(t)
-	foreignFolder := &entity.File{ID: "foreign-folder", ParentID: "foreign-root", TenantID: "user-2", Name: "private", Type: FileTypeFolder}
+	foreignFolder := &entity.File{UserID: "user-2", ID: "foreign-folder", ParentID: "foreign-root", TenantID: "user-2", Name: "private", Type: FileTypeFolder}
 	if err := db.Create(foreignFolder).Error; err != nil {
 		t.Fatalf("seed foreign folder: %v", err)
 	}
@@ -430,7 +458,7 @@ func TestFileService_UploadRejectsInaccessibleParent(t *testing.T) {
 
 func TestFileService_UploadRejectsOverlongNameBeforePut(t *testing.T) {
 	db := setupFolderTestDB(t)
-	parent := &entity.File{ID: "folder-1", ParentID: "root-1", TenantID: "tenant-1", CreatedBy: "tenant-1", Name: "root", Type: FileTypeFolder}
+	parent := &entity.File{UserID: "tenant-1", ID: "folder-1", ParentID: "root-1", TenantID: "tenant-1", CreatedBy: "tenant-1", Name: "root", Type: FileTypeFolder}
 	if err := db.Create(parent).Error; err != nil {
 		t.Fatalf("seed parent folder: %v", err)
 	}
@@ -520,7 +548,7 @@ func TestMoveFilesRenameUpdatesAllLinkedDocuments(t *testing.T) {
 
 func TestMoveFilesRejectsBlankRenameTarget(t *testing.T) {
 	setupFolderTestDB(t)
-	folder := &entity.File{
+	folder := &entity.File{UserID: "tenant-1",
 		ID:       "folder-1",
 		ParentID: "folder-1",
 		TenantID: "tenant-1",
@@ -629,11 +657,11 @@ func seedMoveHierarchyDB(t *testing.T) {
 	t.Helper()
 	setupFolderTestDB(t)
 	for _, f := range []*entity.File{
-		{ID: "R", ParentID: "R", TenantID: "tenant-1", Name: "/", Type: FileTypeFolder},
-		{ID: "D", ParentID: "R", TenantID: "tenant-1", Name: "dest", Type: FileTypeFolder},
-		{ID: "A", ParentID: "R", TenantID: "tenant-1", Name: "A", Type: FileTypeFolder},
-		{ID: "B", ParentID: "A", TenantID: "tenant-1", Name: "B", Type: FileTypeFolder},
-		{ID: "C", ParentID: "B", TenantID: "tenant-1", Name: "C", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "R", ParentID: "R", TenantID: "tenant-1", Name: "/", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "D", ParentID: "R", TenantID: "tenant-1", Name: "dest", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "A", ParentID: "R", TenantID: "tenant-1", Name: "A", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "B", ParentID: "A", TenantID: "tenant-1", Name: "B", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "C", ParentID: "B", TenantID: "tenant-1", Name: "C", Type: FileTypeFolder},
 	} {
 		if err := dao.DB.Create(f).Error; err != nil {
 			t.Fatalf("seed %s: %v", f.ID, err)
@@ -747,10 +775,10 @@ func TestMoveFilesRejectsNestedSourcesInEitherOrder(t *testing.T) {
 func TestMoveFilesAllowsUnrelatedEntries(t *testing.T) {
 	setupFolderTestDB(t)
 	for _, f := range []*entity.File{
-		{ID: "R", ParentID: "R", TenantID: "tenant-1", Name: "/", Type: FileTypeFolder},
-		{ID: "D", ParentID: "R", TenantID: "tenant-1", Name: "dest", Type: FileTypeFolder},
-		{ID: "A", ParentID: "R", TenantID: "tenant-1", Name: "A", Type: FileTypeFolder},
-		{ID: "X", ParentID: "R", TenantID: "tenant-1", Name: "X", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "R", ParentID: "R", TenantID: "tenant-1", Name: "/", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "D", ParentID: "R", TenantID: "tenant-1", Name: "dest", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "A", ParentID: "R", TenantID: "tenant-1", Name: "A", Type: FileTypeFolder},
+		{UserID: "tenant-1", ID: "X", ParentID: "R", TenantID: "tenant-1", Name: "X", Type: FileTypeFolder},
 	} {
 		if err := dao.DB.Create(f).Error; err != nil {
 			t.Fatalf("seed %s: %v", f.ID, err)

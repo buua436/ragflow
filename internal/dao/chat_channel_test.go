@@ -81,7 +81,7 @@ func TestChatChannelDAO_CRUD(t *testing.T) {
 		},
 	}
 	statusActive := 1
-	cc := &entity.ChatChannel{
+	cc := &entity.ChatChannel{UserID: "tenant-1",
 		ID:       "chan-1",
 		TenantID: "tenant-1",
 		Name:     "Test WeCom Bot",
@@ -181,7 +181,7 @@ func TestChatChannelDAO_ListByTenantID(t *testing.T) {
 
 	// Create a test dialog (chat assistant)
 	dialogName := "Dialog Assistant A"
-	d := &entity.Chat{
+	d := &entity.Chat{UserID: "tenant-1",
 		ID:           "diag-1",
 		TenantID:     "tenant-1",
 		Name:         &dialogName,
@@ -200,7 +200,7 @@ func TestChatChannelDAO_ListByTenantID(t *testing.T) {
 	t2 := now
 
 	// Create chat channels (order: oldest first, so list should return youngest first)
-	cc1 := &entity.ChatChannel{
+	cc1 := &entity.ChatChannel{UserID: "tenant-1",
 		ID:       "chan-1",
 		TenantID: "tenant-1",
 		Name:     "WeCom Channel 1",
@@ -212,7 +212,7 @@ func TestChatChannelDAO_ListByTenantID(t *testing.T) {
 			CreateTime: &t1,
 		},
 	}
-	cc2 := &entity.ChatChannel{
+	cc2 := &entity.ChatChannel{UserID: "tenant-1",
 		ID:       "chan-2",
 		TenantID: "tenant-1",
 		Name:     "WeCom Channel 2",
@@ -234,7 +234,8 @@ func TestChatChannelDAO_ListByTenantID(t *testing.T) {
 
 	// Perform query
 	ctx := t.Context()
-	list, err := dao.ListByIDs(ctx, db, []string{"chan-1", "chan-2"})
+	query := db.Model(&entity.ChatChannel{}).Where("chat_channel.id IN ?", []string{"chan-1", "chan-2"})
+	list, err := dao.List(ctx, query)
 	if err != nil {
 		t.Fatalf("ListByIDs failed: %v", err)
 	}

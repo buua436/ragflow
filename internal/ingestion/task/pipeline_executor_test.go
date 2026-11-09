@@ -162,7 +162,7 @@ func makeTaskCtx() *TaskContext {
 			Suffix: ".pdf",
 			Type:   "pdf",
 		},
-		KB: entity.Knowledgebase{
+		KB: entity.Knowledgebase{UserID: "tenant-1",
 			ID:       "kb-1",
 			TenantID: "tenant-1",
 			EmbdID:   "embd-1",
@@ -472,17 +472,18 @@ func TestRecordPipelineLog_TerminalWithoutDSLResolvesCanvasTitle(t *testing.T) {
 	defer cleanup()
 
 	if err := dao.DB.Create(&entity.UserCanvas{
-		ID:     "canvas-1",
-		UserID: "tenant-1",
-		Title:  strPtr("My Pipeline"),
-		Avatar: strPtr("a.png"),
+		ID:       "canvas-1",
+		UserID:   "tenant-1",
+		Title:    strPtr("My Pipeline"),
+		Avatar:   strPtr("a.png"),
+		TenantID: strPtr("tenant-1"),
 	}).Error; err != nil {
 		t.Fatalf("seed agent: %v", err)
 	}
 	if err := dao.DB.AutoMigrate(&entity.Knowledgebase{}); err != nil {
 		t.Fatalf("migrate knowledgebase: %v", err)
 	}
-	if err := dao.DB.Create(&entity.Knowledgebase{
+	if err := dao.DB.Create(&entity.Knowledgebase{UserID: "tenant-1",
 		ID:       "kb-1",
 		TenantID: "tenant-1",
 	}).Error; err != nil {
@@ -563,7 +564,7 @@ func TestRecordPipelineLog_ReusesOpenPreTerminalRow(t *testing.T) {
 
 	progress := 1.0
 	finalMsg := "Parser Done"
-	if err := dao.DB.Create(&entity.Document{
+	if err := dao.DB.Create(&entity.Document{UserID: "tenant-1",
 		ID:           "doc-1",
 		KbID:         "kb-1",
 		ParserID:     "naive",
@@ -638,7 +639,7 @@ func TestRecordPipelineLog_KeepsEarlyTimestampWhenDocumentHasNone(t *testing.T) 
 		t.Fatalf("seed open log: %v", err)
 	}
 
-	if err := dao.DB.Create(&entity.Document{
+	if err := dao.DB.Create(&entity.Document{UserID: "tenant-1",
 		ID:           "doc-1",
 		KbID:         "kb-1",
 		ParserID:     "naive",
@@ -723,7 +724,7 @@ func TestRecordPipelineLog_TerminalDurationOverridesDocumentCopy(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("seed open log: %v", err)
 	}
-	if err := dao.DB.Create(&entity.Document{
+	if err := dao.DB.Create(&entity.Document{UserID: "tenant-1",
 		ID:              "doc-1",
 		KbID:            "kb-1",
 		ParserID:        "naive",
@@ -786,7 +787,7 @@ func TestRecordPipelineLog_DoesNotAdoptAnotherRunsRow(t *testing.T) {
 	}
 
 	finalMsg := "Parser Done"
-	if err := dao.DB.Create(&entity.Document{
+	if err := dao.DB.Create(&entity.Document{UserID: "tenant-1",
 		ID:           "doc-1",
 		KbID:         "kb-1",
 		ParserID:     "naive",
@@ -1142,7 +1143,7 @@ func TestPipelineExecutor_Execute_EmptyOutputRecordsTerminalDuration(t *testing.
 	}).Error; err != nil {
 		t.Fatalf("seed open log: %v", err)
 	}
-	if err := dao.DB.Create(&entity.Document{
+	if err := dao.DB.Create(&entity.Document{UserID: "tenant-1",
 		ID:              "doc-1",
 		KbID:            "kb-1",
 		ParserID:        "naive",
@@ -1530,6 +1531,7 @@ func TestExecutePersistsResolvedVersionBeforeRun(t *testing.T) {
 		ID:             "canvas-1",
 		UserID:         "user-1",
 		CanvasCategory: "dataflow_canvas",
+		TenantID:       strPtr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("seed canvas: %v", err)
 	}

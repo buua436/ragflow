@@ -107,7 +107,7 @@ func TestSearchbotDetailSuccess(t *testing.T) {
 		t.Fatalf("failed to create api token: %v", err)
 	}
 
-	if err := dao.DB.Create(&entity.Search{
+	if err := dao.DB.Create(&entity.Search{UserID: "tenant-1",
 		ID:           "search-1",
 		Avatar:       &searchAvatar,
 		TenantID:     "tenant-1",
@@ -247,7 +247,7 @@ func TestSearchbotDetailRejectsUnauthorizedSearchAccess(t *testing.T) {
 		t.Fatalf("failed to create api token: %v", err)
 	}
 
-	if err := dao.DB.Create(&entity.Search{
+	if err := dao.DB.Create(&entity.Search{UserID: "tenant-1",
 		ID:           "search-1",
 		TenantID:     "tenant-1",
 		Name:         "Search App",
@@ -314,7 +314,7 @@ func TestSearchbotDetailDoesNotExposeInternalErrorText(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("failed to create api token: %v", err)
 	}
-	if err := dao.DB.Create(&entity.Search{
+	if err := dao.DB.Create(&entity.Search{UserID: "tenant-1",
 		ID:           "search-1",
 		TenantID:     "tenant-1",
 		Name:         "Search App",

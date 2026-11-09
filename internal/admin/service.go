@@ -37,8 +37,10 @@ import (
 	"ragflow/internal/engine/kvrocks"
 	"ragflow/internal/entity"
 	modelModule "ragflow/internal/entity/models"
+	"ragflow/internal/permission"
 	"ragflow/internal/server"
 	servicepkg "ragflow/internal/service"
+	fileservice "ragflow/internal/service/file"
 	"ragflow/internal/storage"
 	"ragflow/internal/utility"
 	"regexp"
@@ -177,6 +179,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 	}
 
 	userID := common.GenerateToken()
+	tenantID := common.GenerateToken()
 	accessToken := common.GenerateToken()
 	status := "1"
 	loginChannel := "password"
@@ -215,7 +218,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
 
-	// 2. Create tenant (tenant_id = user_id)
+	// 2. Create tenant
 	// tenant name = nickname + "'s Kingdom" (same as Python)
 	tenantName := utility.TruncateRunes(user.Nickname+"'s Kingdom", common.TenantNameLimit)
 
@@ -244,7 +247,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 
 	tenantStatus := "1"
 	tenant := &entity.Tenant{
-		ID:        userID,
+		ID:        tenantID,
 		Name:      &tenantName,
 		ParserIDs: parserIDs,
 		Credit:    512,
@@ -264,7 +267,7 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 	userTenant := &entity.UserTenant{
 		ID:        common.GenerateToken(),
 		UserID:    userID,
-		TenantID:  userID,
+		TenantID:  tenantID,
 		Role:      "owner",
 		InvitedBy: userID,
 		Status:    &userTenantStatus,
@@ -282,20 +285,8 @@ func (s *Service) CreateUser(ctx context.Context, username, password, role strin
 	}
 
 	// 4. Create root file folder
-	fileID := common.GenerateToken()
-	fileLocation := ""
-	file := &entity.File{
-		ID:        fileID,
-		ParentID:  fileID,
-		UserID:    userID,
-		TenantID:  userID,
-		CreatedBy: userID,
-		Name:      "/",
-		Type:      "folder",
-		Size:      0,
-		Location:  &fileLocation,
-	}
-	if err = tx.Create(file).Error; err != nil {
+	ownerCtx := permission.WithIdentity(ctx, userID, tenantID)
+	if _, err = fileservice.GetOrCreateRootFolder(ownerCtx, tx); err != nil {
 		rollbackTx()
 		return nil, fmt.Errorf("failed to create root file folder: %w", err)
 	}
@@ -1550,10 +1541,11 @@ func (s *Service) InitDefaultAdmin() error {
 func (s *Service) addTenantForAdmin(userID, nickname string) error {
 	status := "1"
 	role := "owner"
+	tenantID := common.GenerateToken()
 	tenantName := utility.TruncateRunes(nickname+"'s Kingdom", common.TenantNameLimit)
 
 	tenant := &entity.Tenant{
-		ID:   userID,
+		ID:   tenantID,
 		Name: &tenantName,
 	}
 	if err := dao.ApplyDefaultTenantInviteEnabled(context.Background(), dao.DB, tenant); err != nil {
@@ -1565,7 +1557,7 @@ func (s *Service) addTenantForAdmin(userID, nickname string) error {
 	}
 
 	userTenant := &entity.UserTenant{
-		TenantID:  userID,
+		TenantID:  tenantID,
 		UserID:    userID,
 		InvitedBy: userID,
 		Role:      role,

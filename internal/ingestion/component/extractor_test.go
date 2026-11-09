@@ -35,6 +35,7 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
 	"ragflow/internal/ingestion/component/schema"
+	"ragflow/internal/permission"
 	"ragflow/internal/tokenizer"
 	"ragflow/internal/utility"
 )
@@ -1368,7 +1369,7 @@ func openExtractorContextTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
 	}
-	if err := db.AutoMigrate(&entity.Tenant{}, &entity.UserTenant{}, &entity.TenantModelProvider{}, &entity.TenantModelInstance{}, &entity.TenantModel{}); err != nil {
+	if err := db.AutoMigrate(&entity.User{}, &entity.Tenant{}, &entity.UserTenant{}, &entity.TenantModelProvider{}, &entity.TenantModelInstance{}, &entity.TenantModel{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return db
@@ -1377,11 +1378,14 @@ func openExtractorContextTestDB(t *testing.T) *gorm.DB {
 func seedExtractorContextModel(t *testing.T, db *gorm.DB, tenantLLMID string) {
 	t.Helper()
 	status := "1"
+	if err := db.Create(&entity.User{ID: "tenant-owner", Nickname: "tenant owner", Email: "tenant-owner@test.local"}).Error; err != nil {
+		t.Fatalf("create owner user: %v", err)
+	}
 	tenant := entity.Tenant{ID: "tenant-1", Status: &status}
 	if err := db.Create(&tenant).Error; err != nil {
 		t.Fatalf("create tenant: %v", err)
 	}
-	membership := entity.UserTenant{ID: "ut-tenant1", UserID: "tenant-1", TenantID: "tenant-1", Role: "owner", Status: &status, LLMID: "gpt-4o@openai"}
+	membership := entity.UserTenant{ID: "ut-tenant1", UserID: "tenant-owner", TenantID: "tenant-1", Role: "owner", Status: &status, LLMID: "gpt-4o@openai"}
 	if tenantLLMID != "" {
 		membership.TenantLLMID = &tenantLLMID
 	}
@@ -1390,7 +1394,7 @@ func seedExtractorContextModel(t *testing.T, db *gorm.DB, tenantLLMID string) {
 	}
 	if err := db.Create(&entity.TenantModelProvider{
 		ID:           "provider-openai",
-		UserID:       "tenant-1",
+		UserID:       "tenant-owner",
 		ProviderName: "OpenAI",
 		TenantID:     "tenant-1",
 	}).Error; err != nil {
@@ -1412,7 +1416,8 @@ func extractorStateCtx(t *testing.T, tenantID string) context.Context {
 	t.Helper()
 	state := runtime.NewCanvasState("run-1", "session-1")
 	state.SetGlobal("tenant_id", tenantID)
-	return runtime.WithState(t.Context(), state)
+	ctx := permission.WithIdentity(t.Context(), "tenant-owner", tenantID)
+	return runtime.WithState(ctx, state)
 }
 
 func TestExtractorContextLength_TenantModelUUID(t *testing.T) {

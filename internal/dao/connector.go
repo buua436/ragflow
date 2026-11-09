@@ -527,20 +527,15 @@ func syncLogsStatusPriorityOrder() string {
 	)
 }
 
-// ListLogsByTaskIDs returns logs only for authorized sync task IDs.
-func (dao *ConnectorDAO) ListLogsByTaskIDs(ctx context.Context, db *gorm.DB, taskIDs []string, datasetID string, offset, limit int) ([]*entity.ConnectorSyncLog, int64, error) {
-	if len(taskIDs) == 0 {
-		return []*entity.ConnectorSyncLog{}, 0, nil
+// ListLogs returns sync logs from an already-scoped query.
+func (dao *ConnectorDAO) ListLogs(ctx context.Context, query *gorm.DB, datasetID string, offset, limit int) ([]*entity.ConnectorSyncLog, int64, error) {
+	if query == nil {
+		return nil, 0, fmt.Errorf("sync log query is nil")
 	}
-	return dao.listLogs(ctx, db, taskIDs, datasetID, offset, limit)
-}
-
-func (dao *ConnectorDAO) listLogs(ctx context.Context, db *gorm.DB, taskIDs []string, datasetID string, offset, limit int) ([]*entity.ConnectorSyncLog, int64, error) {
-	baseQuery := db.WithContext(ctx).Model(&entity.SyncLogs{}).
+	baseQuery := query.WithContext(ctx).
 		Joins("JOIN connector ON sync_logs.connector_id = connector.id").
 		Joins("JOIN connector2kb ON sync_logs.connector_id = connector2kb.connector_id AND sync_logs.kb_id = connector2kb.kb_id").
-		Joins("JOIN knowledgebase ON sync_logs.kb_id = knowledgebase.id").
-		Where("sync_logs.id IN ?", taskIDs)
+		Joins("JOIN knowledgebase ON sync_logs.kb_id = knowledgebase.id")
 
 	if datasetID != "" {
 		baseQuery = baseQuery.Where("sync_logs.kb_id = ?", datasetID)
@@ -552,7 +547,7 @@ func (dao *ConnectorDAO) listLogs(ctx context.Context, db *gorm.DB, taskIDs []st
 	}
 
 	var logs []*entity.ConnectorSyncLog
-	query := baseQuery.
+	listQuery := baseQuery.
 		Select(
 			"sync_logs.id",
 			"sync_logs.connector_id",
@@ -574,9 +569,9 @@ func (dao *ConnectorDAO) listLogs(ctx context.Context, db *gorm.DB, taskIDs []st
 		Distinct().
 		Order(syncLogsStatusPriorityOrder())
 	if limit > 0 {
-		query = query.Offset(offset).Limit(limit)
+		listQuery = listQuery.Offset(offset).Limit(limit)
 	}
-	err := query.Scan(&logs).Error
+	err := listQuery.Scan(&logs).Error
 	if err != nil {
 		return nil, 0, err
 	}

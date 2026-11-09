@@ -38,7 +38,7 @@ func TestUpdateDatasetDocumentListReturnsPinnedVersion(t *testing.T) {
 	insertNamedTestDoc(t, "doc-1", "kb-1", "doc.txt", 10, 5)
 
 	// The document list JOINs file2document/file, so seed those rows too.
-	if err := db.Create(&entity.File{
+	if err := db.Create(&entity.File{UserID: "user-1",
 		ID: "file-1", TenantID: "tenant-1", CreatedBy: "user-1",
 		Name: "doc.txt", Type: "doc", SourceType: "local",
 	}).Error; err != nil {

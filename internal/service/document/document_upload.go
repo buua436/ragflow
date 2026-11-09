@@ -12,9 +12,12 @@ import (
 	"ragflow/internal/entity"
 	"ragflow/internal/permission"
 	"ragflow/internal/service"
+	fileservice "ragflow/internal/service/file"
 	"ragflow/internal/storage"
 	"ragflow/internal/utility"
 	"strings"
+
+	"gorm.io/gorm"
 )
 
 // UploadLocalDocuments stores each uploaded file in object storage and inserts a
@@ -41,7 +44,7 @@ func (s *DocumentService) UploadLocalDocuments(ctx context.Context, kb *entity.K
 	// Resolve (and create if needed) the dataset's file-manager folder up front.
 	// Without the File / file2document linkage the document list (which inner-joins
 	// file2document + file) would never surface the uploaded files.
-	kbFolder, err := s.ensureKBFolder(ctx, kb, userID)
+	kbFolder, err := s.ensureKBFolder(ctx, kb)
 	if err != nil {
 		return nil, []string{err.Error()}
 	}
@@ -147,7 +150,7 @@ func (s *DocumentService) UploadEmptyDocument(ctx context.Context, kb *entity.Kn
 		return nil, common.CodeServerError, err
 	}
 
-	kbFolder, err := s.ensureKBFolder(ctx, kb, userID)
+	kbFolder, err := s.ensureKBFolder(ctx, kb)
 	if err != nil {
 		return nil, common.CodeServerError, err
 	}
@@ -167,44 +170,73 @@ func (s *DocumentService) UploadEmptyDocument(ctx context.Context, kb *entity.Kn
 // ensureKBFolder resolves (creating as needed) the per-dataset file-manager
 // folder: root -> .knowledgebase -> <dataset name>. Mirrors Python
 // get_root_folder + get_kb_folder + new_a_file_from_kb.
-func (s *DocumentService) ensureKBFolder(ctx context.Context, kb *entity.Knowledgebase, tenantID string) (*entity.File, error) {
-	root, err := s.fileDAO.GetRootFolder(ctx, dao.DB, tenantID)
+func (s *DocumentService) ensureKBFolder(ctx context.Context, kb *entity.Knowledgebase) (*entity.File, error) {
+	if kb == nil {
+		return nil, permission.ErrInvalidPermission
+	}
+	if permission.TenantIDFromContext(ctx) == "" {
+		return nil, permission.ErrTenantContextMissing
+	}
+	if permission.TenantIDFromContext(ctx) != kb.TenantID {
+		return nil, permission.ErrIdentityMismatch
+	}
+	root, err := fileservice.GetOrCreateRootFolder(ctx, dao.DB)
 	if err != nil {
 		return nil, err
 	}
-	kbRoot, err := s.newAFileFromKB(ctx, tenantID, knowledgebaseFolderName, root.ID)
+	kbRoot, err := s.newAFileFromKB(ctx, knowledgebaseFolderName, root.ID)
 	if err != nil {
 		return nil, err
 	}
-	return s.newAFileFromKB(ctx, kb.TenantID, kb.Name, kbRoot.ID)
+	return s.newAFileFromKB(ctx, kb.Name, kbRoot.ID)
 }
 
 // newAFileFromKB returns the existing folder named name under parentID, or
 // creates it. Mirrors Python FileService.new_a_file_from_kb.
-func (s *DocumentService) newAFileFromKB(ctx context.Context, tenantID, name, parentID string) (*entity.File, error) {
-	existingFolders, err := s.fileDAO.Query(ctx, dao.DB, name, parentID, tenantID)
-	if err != nil {
-		return nil, err
+func (s *DocumentService) newAFileFromKB(ctx context.Context, name, parentID string) (*entity.File, error) {
+	userID := permission.UserIDFromContext(ctx)
+	tenantID := permission.TenantIDFromContext(ctx)
+	if tenantID == "" {
+		return nil, permission.ErrTenantContextMissing
 	}
-	for _, f := range existingFolders {
-		if f.TenantID == tenantID {
-			return f, nil
-		}
+	if userID == "" {
+		return nil, permission.ErrUnauthenticated
+	}
+	if name == "" || parentID == "" {
+		return nil, permission.ErrInvalidPermission
 	}
 	loc := ""
-	folder := &entity.File{
-		ID:         common.GenerateToken(),
-		ParentID:   parentID,
-		UserID:     tenantID,
-		TenantID:   tenantID,
-		CreatedBy:  tenantID,
-		Name:       name,
-		Type:       "folder",
-		Size:       0,
-		Location:   &loc,
-		SourceType: string(entity.FileSourceKnowledgebase),
-	}
-	if err := s.fileDAO.Create(ctx, dao.DB, folder); err != nil {
+	var folder *entity.File
+	err := dao.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		existingFolders, err := s.fileDAO.Query(ctx, tx, name, parentID, tenantID)
+		if err != nil {
+			return err
+		}
+		for _, existing := range existingFolders {
+			if existing.TenantID == tenantID {
+				folder = existing
+				return permission.NewDatabaseChecker(tx).GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindFolder, ID: folder.ID})
+			}
+		}
+
+		folder = &entity.File{
+			ID:         common.GenerateToken(),
+			ParentID:   parentID,
+			UserID:     userID,
+			TenantID:   tenantID,
+			CreatedBy:  userID,
+			Name:       name,
+			Type:       "folder",
+			Size:       0,
+			Location:   &loc,
+			SourceType: string(entity.FileSourceKnowledgebase),
+		}
+		if err := s.fileDAO.Create(ctx, tx, folder); err != nil {
+			return err
+		}
+		return permission.NewDatabaseChecker(tx).GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindFolder, ID: folder.ID})
+	})
+	if err != nil {
 		return nil, err
 	}
 	return folder, nil
@@ -214,7 +246,25 @@ func (s *DocumentService) newAFileFromKB(ctx context.Context, tenantID, name, pa
 // dataset folder plus a file2document mapping. Mirrors Python
 // FileService.add_file_from_kb (idempotent on the document mapping).
 func (s *DocumentService) addFileFromKB(ctx context.Context, doc *entity.Document, kbFolderID, tenantID string) error {
-	if existing, err := s.file2DocumentDAO.GetByDocumentID(ctx, dao.DB, doc.ID); err == nil && len(existing) > 0 {
+	if doc == nil || doc.UserID == "" || doc.CreatedBy == "" || kbFolderID == "" || tenantID == "" {
+		return permission.ErrInvalidPermission
+	}
+	if permission.TenantIDFromContext(ctx) != tenantID || permission.UserIDFromContext(ctx) == "" {
+		return permission.ErrIdentityMismatch
+	}
+	existing, err := s.file2DocumentDAO.GetByDocumentID(ctx, dao.DB, doc.ID)
+	if err != nil {
+		return err
+	}
+	if len(existing) > 0 {
+		for _, mapping := range existing {
+			if mapping.FileID == nil || *mapping.FileID == "" {
+				continue
+			}
+			if err := permission.NewDatabaseChecker(dao.DB).GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindFile, ID: *mapping.FileID}); err != nil {
+				return err
+			}
+		}
 		return nil
 	}
 	name := ""
@@ -229,28 +279,29 @@ func (s *DocumentService) addFileFromKB(ctx context.Context, doc *entity.Documen
 	file := &entity.File{
 		ID:         fileID,
 		ParentID:   kbFolderID,
-		UserID:     tenantID,
+		UserID:     doc.UserID,
 		TenantID:   tenantID,
-		CreatedBy:  tenantID,
+		CreatedBy:  doc.CreatedBy,
 		Name:       name,
 		Type:       doc.Type,
 		Size:       doc.Size,
 		Location:   &loc,
 		SourceType: string(entity.FileSourceKnowledgebase),
 	}
-	if err := s.fileDAO.Create(ctx, dao.DB, file); err != nil {
-		return err
-	}
 	docID := doc.ID
-	if err := s.file2DocumentDAO.Create(ctx, dao.DB, &entity.File2Document{
-		ID:         common.GenerateToken(),
-		FileID:     &fileID,
-		DocumentID: &docID,
-	}); err != nil {
-		_ = s.fileDAO.Delete(ctx, dao.DB, fileID)
-		return err
-	}
-	return nil
+	return dao.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := s.fileDAO.Create(ctx, tx, file); err != nil {
+			return err
+		}
+		if err := permission.NewDatabaseChecker(tx).GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindFile, ID: file.ID}); err != nil {
+			return err
+		}
+		return s.file2DocumentDAO.Create(ctx, tx, &entity.File2Document{
+			ID:         common.GenerateToken(),
+			FileID:     &fileID,
+			DocumentID: &docID,
+		})
+	})
 }
 
 func (s *DocumentService) UploadWebDocument(ctx context.Context, kb *entity.Knowledgebase, name, url string) (map[string]interface{}, common.ErrorCode, error) {
@@ -263,7 +314,7 @@ func (s *DocumentService) UploadWebDocument(ctx context.Context, kb *entity.Know
 		return nil, common.CodeServerError, fmt.Errorf("storage not initialized")
 	}
 
-	kbFolder, err := s.ensureKBFolder(ctx, kb, userID)
+	kbFolder, err := s.ensureKBFolder(ctx, kb)
 	if err != nil {
 		return nil, common.CodeServerError, err
 	}
@@ -346,7 +397,7 @@ func normalizeWebDocumentName(name, contentType string, blob []byte) (string, bo
 // newDatasetDocument builds a Document row for an upload, deriving suffix and
 // content hash. selection/parserConfig are resolved by the caller (see
 // resolveDocumentParser); blob may be nil for the empty/virtual document.
-func (s *DocumentService) newDatasetDocument(kb *entity.Knowledgebase, tenantID, filename, location, filetype string, selection *service.ParserSelection, parserConfig entity.JSONMap, src string, size int64, blob []byte) *entity.Document {
+func (s *DocumentService) newDatasetDocument(kb *entity.Knowledgebase, creatorUserID, filename, location, filetype string, selection *service.ParserSelection, parserConfig entity.JSONMap, src string, size int64, blob []byte) *entity.Document {
 	docID := common.GenerateToken()
 	parserConfig = cloneParserConfigForDocument(parserConfig)
 	status := "1"
@@ -359,12 +410,12 @@ func (s *DocumentService) newDatasetDocument(kb *entity.Knowledgebase, tenantID,
 	doc := &entity.Document{
 		ID:                docID,
 		KbID:              kb.ID,
-		UserID:            tenantID,
+		UserID:            creatorUserID,
 		ParserID:          parserID,
 		PipelineID:        pipelineID,
 		PipelineVersionID: kb.PipelineVersionID,
 		ParserConfig:      parserConfig,
-		CreatedBy:         tenantID,
+		CreatedBy:         creatorUserID,
 		Type:              filetype,
 		SourceType:        src,
 		Name:              &filename,

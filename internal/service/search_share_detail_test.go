@@ -66,7 +66,7 @@ func TestSearchServiceGetSearchShareDetail(t *testing.T) {
 	}
 
 	searchAvatar := "search-avatar"
-	if err := dao.DB.Create(&entity.Search{
+	if err := dao.DB.Create(&entity.Search{UserID: "tenant-1",
 		ID:           "search-1",
 		Avatar:       &searchAvatar,
 		TenantID:     "tenant-1",
@@ -135,7 +135,7 @@ func TestSearchServiceGetSearchShareDetailRejectsUnauthorizedUser(t *testing.T) 
 		t.Fatalf("failed to create user_tenant: %v", err)
 	}
 
-	if err := dao.DB.Create(&entity.Search{
+	if err := dao.DB.Create(&entity.Search{UserID: "tenant-1",
 		ID:           "search-1",
 		TenantID:     "tenant-1",
 		Name:         "Search App",

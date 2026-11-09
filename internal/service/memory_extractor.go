@@ -497,7 +497,8 @@ func (s *MemoryMessageService) extractByLLM(ctx context.Context, mem *CreateMemo
 	if mem.TenantLLMID != nil && *mem.TenantLLMID != "" {
 		llmRef = *mem.TenantLLMID
 	}
-	chatModel, err := NewModelFactory().NewChatModel(permission.WithTenantID(ctx, mem.TenantID), llmRef)
+	modelContext := permission.WithIdentity(ctx, mem.UserID, mem.TenantID)
+	chatModel, err := NewModelFactory().NewChatModel(modelContext, llmRef)
 	if err != nil {
 		return nil, fmt.Errorf("resolve chat model: %w", classifyMemoryTaskDependencyError(err))
 	}

@@ -23,7 +23,6 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
-	"ragflow/internal/permission"
 )
 
 // insertTTSTestTenant inserts a tenant and owner membership; ttsID may be nil (no default
@@ -40,7 +39,7 @@ func insertTTSTestTenant(t *testing.T, id string, ttsID *string) {
 		t.Fatalf("insert test tenant: %v", err)
 	}
 	if err := dao.DB.Create(&entity.UserTenant{
-		ID: "owner-" + id, UserID: id, TenantID: id, Role: "owner", Status: sptr(string(entity.StatusValid)),
+		ID: "owner-" + id, UserID: "tenant-owner-" + id, TenantID: id, Role: "owner", Status: sptr(string(entity.StatusValid)),
 		LLMID: "glm-4-flash@ZHIPU-AI", EmbdID: "BAAI/bge-m3@ZHIPU-AI", TTSID: ttsID,
 	}).Error; err != nil {
 		t.Fatalf("insert test owner membership: %v", err)
@@ -59,7 +58,7 @@ func TestAudioSpeech_NoSelectionNoDefaultTTS(t *testing.T) {
 
 	svc := NewModelCallService()
 	text := "hello"
-	ctx := serviceTestContext(t, "tenant-1", "tenant-1")
+	ctx := serviceTestContext(t, "tenant-owner-tenant-1", "tenant-1")
 	resp, code, err := svc.AudioSpeech(ctx, "", &text, nil)
 	if err == nil {
 		t.Fatalf("expected error for missing default TTS model, got resp=%v", resp)
@@ -83,7 +82,8 @@ func TestResolveDefaultModelConfig_NilTTSPointer(t *testing.T) {
 	pushServiceDB(t, testDB)
 	insertTTSTestTenant(t, "tenant-2", nil)
 
-	_, err := NewModelFactory().resolveDefaultConfig(permission.WithTenantID(t.Context(), "tenant-2"), entity.ModelTypeTTS)
+	ctx := serviceTestContext(t, "tenant-owner-tenant-2", "tenant-2")
+	_, err := NewModelFactory().resolveDefaultConfig(ctx, entity.ModelTypeTTS)
 	if err == nil {
 		t.Fatal("expected error for nil tts_id, got nil")
 	}

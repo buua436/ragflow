@@ -63,7 +63,7 @@ func setupCompilationStatusHandlerDB(t *testing.T) *gorm.DB {
 func insertCompilationStatusHandlerKB(t *testing.T, kbID, ownerID string) {
 	t.Helper()
 	status := string(entity.StatusValid)
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: ownerID,
 		ID:         kbID,
 		TenantID:   ownerID,
 		Name:       "compile-status-handler-kb",
@@ -210,8 +210,8 @@ func TestCompilationStatusHandler_FullOutput(t *testing.T) {
 	}
 }
 
-// TestCompilationStatusHandler_Unauthorized verifies a user who does not own the
-// dataset is rejected with the standardized forbidden response.
+// TestCompilationStatusHandler_Unauthorized verifies a cross-tenant dataset is
+// hidden with the standardized not-found response.
 func TestCompilationStatusHandler_Unauthorized(t *testing.T) {
 	db := setupCompilationStatusHandlerDB(t)
 	// Keep the dataset in another tenant so this test exercises a real
@@ -229,10 +229,10 @@ func TestCompilationStatusHandler_Unauthorized(t *testing.T) {
 	}
 
 	_, body := getCompilationStatus(t, newCompilationStatusHandlerRouter(), "kb-status-forbidden")
-	if body.Code != int(common.CodeForbidden) {
-		t.Fatalf("code=%d want %d", body.Code, common.CodeForbidden)
+	if body.Code != int(common.CodeNotFound) {
+		t.Fatalf("code=%d want %d", body.Code, common.CodeNotFound)
 	}
-	if body.Message != "Permission denied" {
-		t.Fatalf("message=%q want %q", body.Message, "Permission denied")
+	if body.Message != "Resource not found" {
+		t.Fatalf("message=%q want %q", body.Message, "Resource not found")
 	}
 }

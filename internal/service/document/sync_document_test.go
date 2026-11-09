@@ -60,11 +60,15 @@ func setupSyncDocumentTest(t *testing.T, existing bool) (*DocumentService, *gorm
 		old := input
 		old.SourceDocument.Fingerprint = "old-hash"
 		old.SourceDocument.Blob = []byte("old content")
-		if _, err := svc.Upsert(t.Context(), old); err != nil {
+		if _, err := svc.Upsert(syncDocumentTestContext(t.Context(), old), old); err != nil {
 			t.Fatalf("seed existing document: %v", err)
 		}
 	}
 	return svc, db, store, input
+}
+
+func syncDocumentTestContext(ctx context.Context, input service.DocumentUpsertInput) context.Context {
+	return permission.WithIdentity(ctx, input.TaskContext.Connector.UserID, input.TaskContext.Connector.TenantID)
 }
 
 func assertSyncDocumentState(t *testing.T, db *gorm.DB, store *fakeUploadStorage, input service.DocumentUpsertInput, hash string) *entity.Document {
@@ -116,7 +120,7 @@ func TestSyncDocumentDownstreamFailurePreservesPublishedBlobAndRetries(t *testin
 						t.Fatal(err)
 					}
 				}
-				if _, err := svc.Upsert(t.Context(), input); !errors.Is(err, faultErr) {
+				if _, err := svc.Upsert(syncDocumentTestContext(t.Context(), input), input); !errors.Is(err, faultErr) {
 					t.Fatalf("Upsert error = %v, want injected failure", err)
 				}
 				assertSyncDocumentState(t, db, store, input, "")
@@ -131,14 +135,14 @@ func TestSyncDocumentDownstreamFailurePreservesPublishedBlobAndRetries(t *testin
 						t.Fatal(err)
 					}
 				}
-				result, err := svc.Upsert(t.Context(), input)
+				result, err := svc.Upsert(syncDocumentTestContext(t.Context(), input), input)
 				if err != nil || result.Action != service.DocumentActionUpdated {
 					t.Fatalf("retry = %+v, err = %v", result, err)
 				}
 				doc := assertSyncDocumentState(t, db, store, input, "new-hash")
 				location := *doc.Location
 				count := len(store.objects)
-				result, err = svc.Upsert(t.Context(), input)
+				result, err = svc.Upsert(syncDocumentTestContext(t.Context(), input), input)
 				if err != nil || result.Action != service.DocumentActionSkipped {
 					t.Fatalf("unchanged successful sync = %+v, err = %v", result, err)
 				}
@@ -161,7 +165,7 @@ func TestSyncDocumentRunningParseRetryAndSourceRevert(t *testing.T) {
 			input.AutoParse = true
 			insertTestIngestionTaskWithStatus(t, "old-task", "tenant-1", input.DocumentID, "kb-sync", common.RUNNING)
 			for attempt := 0; attempt < 2; attempt++ {
-				if _, err := svc.Upsert(t.Context(), input); err == nil || !strings.Contains(err.Error(), common.RUNNING) {
+				if _, err := svc.Upsert(syncDocumentTestContext(t.Context(), input), input); err == nil || !strings.Contains(err.Error(), common.RUNNING) {
 					t.Fatalf("running parse Upsert = %v", err)
 				}
 				assertSyncDocumentState(t, db, store, input, "")
@@ -176,7 +180,7 @@ func TestSyncDocumentRunningParseRetryAndSourceRevert(t *testing.T) {
 			svc.purgeTaskState = func(context.Context, string) error { return nil }
 			publisher := &recordingTaskPublisher{}
 			svc.ingestionTaskSvc.SetTaskPublisher(publisher)
-			result, err := svc.Upsert(t.Context(), input)
+			result, err := svc.Upsert(syncDocumentTestContext(t.Context(), input), input)
 			if err != nil || result.Action != service.DocumentActionUpdated {
 				t.Fatalf("terminal task retry = %+v, err = %v", result, err)
 			}
@@ -184,7 +188,7 @@ func TestSyncDocumentRunningParseRetryAndSourceRevert(t *testing.T) {
 			if len(publisher.messages) != 1 || publisher.messages[0].TaskID == "old-task" {
 				t.Fatalf("replacement parse publications = %#v", publisher.messages)
 			}
-			if result, err = svc.Upsert(t.Context(), input); err != nil || result.Action != service.DocumentActionSkipped || len(publisher.messages) != 1 {
+			if result, err = svc.Upsert(syncDocumentTestContext(t.Context(), input), input); err != nil || result.Action != service.DocumentActionSkipped || len(publisher.messages) != 1 {
 				t.Fatalf("unchanged parse retry = %+v, err = %v, publications = %d", result, err, len(publisher.messages))
 			}
 		})
@@ -215,7 +219,7 @@ func TestSyncDocumentInsertLinkRollbackCleanup(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := svc.Upsert(t.Context(), input); err == nil {
+			if _, err := svc.Upsert(syncDocumentTestContext(t.Context(), input), input); err == nil {
 				t.Fatal("expected file link failure")
 			}
 			if rollbackFails {
@@ -240,7 +244,7 @@ func TestSyncDocumentConcurrentPublicationCannotAcknowledgeAnotherRevision(t *te
 	}}
 	svc.docEngine = engine
 	svc.metadataSvc = service.NewMetadataServiceForTest(dao.NewKnowledgebaseDAO(), engine)
-	if _, err := svc.Upsert(t.Context(), input); err == nil || !strings.Contains(err.Error(), "changed before") {
+	if _, err := svc.Upsert(syncDocumentTestContext(t.Context(), input), input); err == nil || !strings.Contains(err.Error(), "changed before") {
 		t.Fatalf("concurrent publication Upsert = %v", err)
 	}
 	input.SourceDocument.Blob = []byte("another revision")
@@ -268,7 +272,7 @@ func TestSyncDocumentCleanupPreservesBlobWhenReferenceLookupFails(t *testing.T) 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := svc.Upsert(t.Context(), input); err == nil {
+	if _, err := svc.Upsert(syncDocumentTestContext(t.Context(), input), input); err == nil {
 		t.Fatal("expected update failure")
 	}
 	if len(store.objects) != 2 {
@@ -312,7 +316,7 @@ func TestSyncDocumentSerializesMetadataAcrossRevisions(t *testing.T) {
 			second.metadataSvc = service.NewMetadataServiceForTest(dao.NewKnowledgebaseDAO(), secondEngine)
 			input.SourceDocument.Metadata = map[string]interface{}{"revision": "first"}
 			firstResult := make(chan error, 1)
-			go func() { _, err := first.Upsert(t.Context(), input); firstResult <- err }()
+			go func() { _, err := first.Upsert(syncDocumentTestContext(t.Context(), input), input); firstResult <- err }()
 			select {
 			case <-firstEntered:
 			case <-time.After(5 * time.Second):
@@ -326,7 +330,7 @@ func TestSyncDocumentSerializesMetadataAcrossRevisions(t *testing.T) {
 			secondResult := make(chan error, 1)
 			go func() {
 				close(secondStarted)
-				_, err := second.Upsert(t.Context(), next)
+				_, err := second.Upsert(syncDocumentTestContext(t.Context(), next), next)
 				secondResult <- err
 			}()
 			<-secondStarted
@@ -359,6 +363,7 @@ func TestSyncDocumentSerializesMetadataAcrossRevisions(t *testing.T) {
 func TestSyncDocumentAcknowledgesCompletedWorkAfterCancellation(t *testing.T) {
 	svc, db, store, input := setupSyncDocumentTest(t, true)
 	ctx, cancel := context.WithCancel(t.Context())
+	ctx = syncDocumentTestContext(ctx, input)
 	defer cancel()
 	engine := &syncMetadataFaultEngine{onUpdate: func() error { cancel(); return nil }}
 	svc.docEngine = engine
@@ -374,6 +379,7 @@ func TestSyncDocumentAcknowledgesCompletedWorkAfterCancellation(t *testing.T) {
 func TestSyncDocumentAcknowledgesParseEnqueueAfterCancellation(t *testing.T) {
 	svc, db, store, input := setupSyncDocumentTest(t, true)
 	ctx, cancel := context.WithCancel(t.Context())
+	ctx = syncDocumentTestContext(ctx, input)
 	defer cancel()
 	publisher := &recordingTaskPublisher{}
 	svc.ingestionTaskSvc.SetTaskPublisher(publisher)
@@ -403,7 +409,7 @@ func TestSyncDocumentAcknowledgesParseEnqueueAfterCancellation(t *testing.T) {
 	if task.UserID != input.TaskContext.Connector.UserID {
 		t.Fatalf("ingestion task user id = %q, want connector owner %q", task.UserID, input.TaskContext.Connector.UserID)
 	}
-	result, err = svc.Upsert(t.Context(), input)
+	result, err = svc.Upsert(syncDocumentTestContext(t.Context(), input), input)
 	if err != nil || result.Action != service.DocumentActionSkipped || len(publisher.messages) != 1 {
 		t.Fatalf("completed revision retried enqueue: result = %+v err = %v publications = %d", result, err, len(publisher.messages))
 	}
@@ -416,7 +422,7 @@ func TestSyncDocumentAutoParseRejectsMissingConnectorOwner(t *testing.T) {
 	publisher := &recordingTaskPublisher{}
 	svc.ingestionTaskSvc.SetTaskPublisher(publisher)
 
-	if _, err := svc.Upsert(t.Context(), input); err == nil || !strings.Contains(err.Error(), "no owner user_id") {
+	if _, err := svc.Upsert(syncDocumentTestContext(t.Context(), input), input); err == nil || !strings.Contains(err.Error(), "no owner user_id") {
 		t.Fatalf("Upsert error = %v, want missing connector owner", err)
 	}
 	if len(publisher.messages) != 0 {
@@ -436,11 +442,11 @@ func TestSyncDocumentReenqueuesParseWithConnectorOwner(t *testing.T) {
 	publisher := &recordingTaskPublisher{}
 	svc.ingestionTaskSvc.SetTaskPublisher(publisher)
 
-	if _, err := svc.Upsert(t.Context(), input); err != nil {
+	if _, err := svc.Upsert(syncDocumentTestContext(t.Context(), input), input); err != nil {
 		t.Fatalf("sync document before parse retry: %v", err)
 	}
 	input.AutoParse = true
-	result, err := svc.Upsert(t.Context(), input)
+	result, err := svc.Upsert(syncDocumentTestContext(t.Context(), input), input)
 	if err != nil || result.Action != service.DocumentActionSkipped {
 		t.Fatalf("parse retry = %+v, err = %v", result, err)
 	}
@@ -456,18 +462,12 @@ func TestSyncDocumentReenqueuesParseWithConnectorOwner(t *testing.T) {
 	}
 }
 
-func TestSyncDocumentParseContextUsesConnectorIdentity(t *testing.T) {
-	ctx := permission.WithIdentity(t.Context(), "request-user", "request-tenant")
-	parseCtx, err := syncDocumentParseContext(ctx, service.SyncTaskContext{
-		Connector: entity.Connector{ID: "connector-1", UserID: "connector-owner", TenantID: "connector-tenant"},
-	})
-	if err != nil {
-		t.Fatal(err)
+func TestSyncDocumentRequiresTaskIdentity(t *testing.T) {
+	svc, _, store, input := setupSyncDocumentTest(t, false)
+	if _, err := svc.Upsert(t.Context(), input); !errors.Is(err, permission.ErrIdentityMismatch) {
+		t.Fatalf("Upsert() error = %v, want missing task identity", err)
 	}
-	if got := permission.UserIDFromContext(parseCtx); got != "connector-owner" {
-		t.Fatalf("parse context user id = %q, want connector-owner", got)
-	}
-	if got := permission.TenantIDFromContext(parseCtx); got != "connector-tenant" {
-		t.Fatalf("parse context tenant id = %q, want connector-tenant", got)
+	if len(store.objects) != 0 {
+		t.Fatalf("storage objects = %d, want no writes before identity validation", len(store.objects))
 	}
 }

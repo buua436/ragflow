@@ -40,7 +40,7 @@ func TestMigratePermissions(t *testing.T) {
 	}
 	if err := db.Exec(`INSERT INTO user_tenant (id, user_id, tenant_id, role, invited_by, status)
 		VALUES ('membership-1', 'user-1', 'tenant-1', 'normal', 'owner-1', '1'),
-		('membership-owner', 'tenant-1', 'tenant-1', 'owner', '', '1')`).Error; err != nil {
+		('membership-owner', 'owner-user', 'tenant-1', 'owner', '', '1')`).Error; err != nil {
 		t.Fatalf("create existing membership: %v", err)
 	}
 	if err := db.Exec(`CREATE TABLE api_token (tenant_id varchar(32) NOT NULL, token varchar(255) NOT NULL,
@@ -53,7 +53,7 @@ func TestMigratePermissions(t *testing.T) {
 	if err := db.Exec(`CREATE TABLE user_canvas (id varchar(32) PRIMARY KEY, user_id varchar(255) NOT NULL)`).Error; err != nil {
 		t.Fatalf("create existing canvas table: %v", err)
 	}
-	if err := db.Exec(`INSERT INTO user_canvas (id, user_id) VALUES ('canvas-1', 'tenant-1')`).Error; err != nil {
+	if err := db.Exec(`INSERT INTO user_canvas (id, user_id) VALUES ('canvas-1', 'owner-user')`).Error; err != nil {
 		t.Fatalf("create existing canvas: %v", err)
 	}
 	if err := db.Exec(`CREATE TABLE tenant_model_provider (
@@ -106,15 +106,15 @@ func TestMigratePermissions(t *testing.T) {
 	if err := db.Take(&provider, "id = ?", "provider-1").Error; err != nil {
 		t.Fatalf("read migrated model provider: %v", err)
 	}
-	if provider.UserID != "tenant-1" {
-		t.Fatalf("model provider user_id = %q, want tenant-1", provider.UserID)
+	if provider.UserID != "owner-user" {
+		t.Fatalf("model provider user_id = %q, want owner-user", provider.UserID)
 	}
 	var token entity.APIToken
 	if err := db.Take(&token, "tenant_id = ? AND token = ?", "tenant-1", "token-1").Error; err != nil {
 		t.Fatalf("read migrated API token: %v", err)
 	}
-	if token.UserID == nil || *token.UserID != "tenant-1" {
-		t.Fatalf("API token user_id = %v, want tenant-1", token.UserID)
+	if token.UserID == nil || *token.UserID != "owner-user" {
+		t.Fatalf("API token user_id = %v, want owner-user", token.UserID)
 	}
 	var canvas entity.UserCanvas
 	if err := db.Take(&canvas, "id = ?", "canvas-1").Error; err != nil {
@@ -179,6 +179,93 @@ func TestMigratePermissions(t *testing.T) {
 	}
 	if canvas.TenantID == nil || *canvas.TenantID != "" {
 		t.Fatalf("repeated migration backfilled canvas tenant_id = %v, want it unchanged", canvas.TenantID)
+	}
+}
+
+func TestMigrateTenantModelProviderRequiresAnOwnerMembership(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if err := db.AutoMigrate(&entity.UserTenant{}, &entity.TenantModelProvider{}); err != nil {
+		t.Fatalf("migrate permission tables: %v", err)
+	}
+	valid := string(entity.StatusValid)
+	if err := db.Create(&entity.UserTenant{
+		ID: "member", UserID: "member-user", TenantID: "tenant-1", Role: "normal", Status: &valid,
+	}).Error; err != nil {
+		t.Fatalf("create non-owner membership: %v", err)
+	}
+	if err := db.Create(&entity.TenantModelProvider{
+		ID: "provider-1", TenantID: "tenant-1", ProviderName: "OpenAI",
+	}).Error; err != nil {
+		t.Fatalf("create provider with missing owner user_id: %v", err)
+	}
+	if err := migrateTenantModelProviderUserID(t.Context(), db); err == nil {
+		t.Fatal("migration inferred the tenant ID as the model provider owner")
+	}
+}
+
+func TestMigrateResourceUserIDsRepairsLegacyTenantOwnerValues(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if err := db.AutoMigrate(&entity.UserTenant{}, &entity.Knowledgebase{}, &entity.Document{}, &entity.File{}); err != nil {
+		t.Fatalf("migrate test tables: %v", err)
+	}
+	joined := string(entity.StatusValid)
+	for _, membership := range []entity.UserTenant{
+		{ID: "owner-membership", UserID: "owner-user", TenantID: "tenant-id", Role: "owner", Status: &joined},
+		{ID: "member-membership", UserID: "member-user", TenantID: "tenant-id", Role: "normal", Status: &joined},
+	} {
+		if err := db.Create(&membership).Error; err != nil {
+			t.Fatalf("create membership: %v", err)
+		}
+	}
+	if err := db.Create(&entity.Knowledgebase{ID: "dataset", UserID: "tenant-id", TenantID: "tenant-id", CreatedBy: "member-user"}).Error; err != nil {
+		t.Fatalf("create dataset: %v", err)
+	}
+	if err := db.Create(&entity.Document{ID: "document", UserID: "tenant-id", KbID: "dataset", CreatedBy: "member-user", ParserConfig: entity.JSONMap{}}).Error; err != nil {
+		t.Fatalf("create document: %v", err)
+	}
+	if err := db.Create(&entity.File{ID: "root", ParentID: "root", UserID: "tenant-id", TenantID: "tenant-id", CreatedBy: "member-user", Name: "/", Type: "folder"}).Error; err != nil {
+		t.Fatalf("create root folder: %v", err)
+	}
+	if err := db.Create(&entity.File{ID: "file", ParentID: "root", UserID: "tenant-id", TenantID: "tenant-id", CreatedBy: "member-user", Name: "file.txt", Type: "doc"}).Error; err != nil {
+		t.Fatalf("create child file: %v", err)
+	}
+
+	if err := migrateResourceUserIDs(t.Context(), db); err != nil {
+		t.Fatalf("migrate resource user IDs: %v", err)
+	}
+	var dataset entity.Knowledgebase
+	if err := db.Take(&dataset, "id = ?", "dataset").Error; err != nil {
+		t.Fatalf("load dataset: %v", err)
+	}
+	if dataset.UserID != "member-user" {
+		t.Fatalf("dataset user_id = %q, want active creator member", dataset.UserID)
+	}
+	var document entity.Document
+	if err := db.Take(&document, "id = ?", "document").Error; err != nil {
+		t.Fatalf("load document: %v", err)
+	}
+	if document.UserID != "member-user" {
+		t.Fatalf("document user_id = %q, want active creator member", document.UserID)
+	}
+	var root entity.File
+	if err := db.Take(&root, "id = ?", "root").Error; err != nil {
+		t.Fatalf("load root folder: %v", err)
+	}
+	if root.UserID != "owner-user" || root.CreatedBy != "member-user" {
+		t.Fatalf("root owner/creator = %q/%q, want owner-user/member-user", root.UserID, root.CreatedBy)
+	}
+	var file entity.File
+	if err := db.Take(&file, "id = ?", "file").Error; err != nil {
+		t.Fatalf("load child file: %v", err)
+	}
+	if file.UserID != "member-user" {
+		t.Fatalf("file user_id = %q, want active creator member", file.UserID)
 	}
 }
 

@@ -37,27 +37,26 @@ import (
 
 var syncFilenameUnsafeRE = regexp.MustCompile(`[\\/:*?"<>|]+`)
 
-func syncDocumentParseContext(ctx context.Context, taskContext service.SyncTaskContext) (context.Context, error) {
-	userID := strings.TrimSpace(taskContext.Connector.UserID)
-	if userID == "" {
-		return nil, fmt.Errorf("connector %s has no owner user_id", taskContext.Connector.ID)
-	}
-	tenantID := strings.TrimSpace(taskContext.Connector.TenantID)
-	if tenantID == "" {
-		return nil, fmt.Errorf("connector %s has no tenant_id", taskContext.Connector.ID)
-	}
-	return permission.WithIdentity(ctx, userID, tenantID), nil
-}
-
 // Upsert stores one normalized source document.
 func (s *DocumentService) Upsert(ctx context.Context, input service.DocumentUpsertInput) (service.DocumentUpsertResult, error) {
 	if input.DocumentID == "" {
 		return service.DocumentUpsertResult{}, fmt.Errorf("document id is empty")
 	}
+	userID := strings.TrimSpace(input.TaskContext.Connector.UserID)
+	tenantID := strings.TrimSpace(input.TaskContext.Connector.TenantID)
+	if userID == "" {
+		return service.DocumentUpsertResult{}, fmt.Errorf("connector %s has no owner user_id", input.TaskContext.Connector.ID)
+	}
+	if tenantID == "" {
+		return service.DocumentUpsertResult{}, fmt.Errorf("connector %s has no tenant_id", input.TaskContext.Connector.ID)
+	}
+	if input.TaskContext.Knowledgebase.TenantID != tenantID ||
+		permission.UserIDFromContext(ctx) != userID || permission.TenantIDFromContext(ctx) != tenantID {
+		return service.DocumentUpsertResult{}, permission.ErrIdentityMismatch
+	}
 
 	// get base info
 	kb := &input.TaskContext.Knowledgebase
-	tenantID := input.TaskContext.Connector.TenantID
 	// return normalized filename
 	filename := syncDocumentFilename(input.SourceDocument.SemanticIdentifier, input.SourceDocument.Extension, input.SourceDocument.SourceID)
 	filetype := utility.FilenameType(filename)
@@ -141,18 +140,14 @@ func (s *DocumentService) Upsert(ctx context.Context, input service.DocumentUpse
 func (s *DocumentService) insertSyncDocument(ctx context.Context, input service.DocumentUpsertInput, filename, location, filetype, contentHash, tenantID string) (service.DocumentUpsertResult, error) {
 	// base info
 	kb := &input.TaskContext.Knowledgebase
-	kbFolder, err := s.ensureKBFolder(ctx, kb, tenantID)
+	kbFolder, err := s.ensureKBFolder(ctx, kb)
 	if err != nil {
 		return service.DocumentUpsertResult{}, err
 	}
 
 	// create the 'doc'
 	selection, parserConfig := resolveDocumentParser(ctx, kb, filename, utility.FileType(filetype), kb.ParserConfig)
-	doc := s.newDatasetDocument(kb, tenantID, filename, "", filetype, selection, parserConfig, input.SourceType, int64(len(input.SourceDocument.Blob)), input.SourceDocument.Blob)
-	if ownerID := strings.TrimSpace(kb.CreatedBy); ownerID != "" {
-		doc.CreatedBy = ownerID
-		doc.UserID = ownerID
-	}
+	doc := s.newDatasetDocument(kb, permission.UserIDFromContext(ctx), filename, "", filetype, selection, parserConfig, input.SourceType, int64(len(input.SourceDocument.Blob)), input.SourceDocument.Blob)
 	doc.ID = input.DocumentID
 	// A fingerprint is acknowledged only after all dependent work succeeds.
 	doc.ContentHash = nil
@@ -236,11 +231,7 @@ func (s *DocumentService) afterSyncDocumentUpsert(ctx context.Context, input ser
 	}
 	// do auto_parse if enabled
 	if input.AutoParse {
-		parseCtx, err := syncDocumentParseContext(ctx, input.TaskContext)
-		if err != nil {
-			return err
-		}
-		if err := s.StartParseDocuments(parseCtx, doc, &input.TaskContext.Knowledgebase, StartParseOptions{RerunWithDelete: rerun}); err != nil {
+		if err := s.StartParseDocuments(ctx, doc, &input.TaskContext.Knowledgebase, StartParseOptions{RerunWithDelete: rerun}); err != nil {
 			return err
 		}
 	}
@@ -281,11 +272,7 @@ func (s *DocumentService) ensureSyncDocumentPostWrite(ctx context.Context, input
 	if task != nil {
 		return nil
 	}
-	parseCtx, err := syncDocumentParseContext(ctx, input.TaskContext)
-	if err != nil {
-		return err
-	}
-	return s.StartParseDocuments(parseCtx, doc, &input.TaskContext.Knowledgebase, StartParseOptions{})
+	return s.StartParseDocuments(ctx, doc, &input.TaskContext.Knowledgebase, StartParseOptions{})
 }
 
 // updateSyncDocumentFile updates the file-manager row linked to a synced document.
@@ -297,7 +284,7 @@ func (s *DocumentService) updateSyncDocumentFile(ctx context.Context, input serv
 
 	// no updates
 	if len(mappings) == 0 || mappings[0].FileID == nil {
-		kbFolder, folderErr := s.ensureKBFolder(ctx, &input.TaskContext.Knowledgebase, input.TaskContext.Connector.TenantID)
+		kbFolder, folderErr := s.ensureKBFolder(ctx, &input.TaskContext.Knowledgebase)
 		if folderErr != nil {
 			return folderErr
 		}

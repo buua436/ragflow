@@ -46,14 +46,11 @@ func (dao *SkillSpaceDAO) GetByID(ctx context.Context, db *gorm.DB, id string) (
 	return &space, nil
 }
 
-// GetByIDs retrieves active skill spaces by ID.
-func (dao *SkillSpaceDAO) GetByIDs(ctx context.Context, db *gorm.DB, ids []string) ([]*entity.SkillSpace, error) {
-	spaces := make([]*entity.SkillSpace, 0, len(ids))
-	if len(ids) == 0 {
-		return spaces, nil
-	}
-	err := db.WithContext(ctx).Where("id IN ? AND status = ?", ids, entity.SpaceStatusActive).
-		Order("create_time DESC").Find(&spaces).Error
+// List retrieves active skill spaces from an already-scoped query.
+func (dao *SkillSpaceDAO) List(ctx context.Context, query *gorm.DB) ([]*entity.SkillSpace, error) {
+	spaces := make([]*entity.SkillSpace, 0)
+	err := query.WithContext(ctx).Where("skill_spaces.status = ?", entity.SpaceStatusActive).
+		Order("skill_spaces.create_time DESC").Find(&spaces).Error
 	return spaces, err
 }
 

@@ -29,7 +29,6 @@ import (
 	"ragflow/internal/engine"
 	"ragflow/internal/engine/types"
 	"ragflow/internal/entity"
-	"ragflow/internal/permission"
 )
 
 // ---------------------------------------------------------------------------
@@ -65,13 +64,8 @@ func (e *skillSearchEngine) Search(_ context.Context, req *types.SearchRequest) 
 	return &types.SearchResult{Chunks: e.searchResults, Total: int64(len(e.searchResults))}, nil
 }
 
-// setupSkillSearchTenant wires an in-memory DB for user "owner" resolving to
-// its own tenant via the default ("default") skill space path.
-//
-// The tenant ID is intentionally == the user ID ("owner"). In CE the resolver
-// walks the owner-role membership below; in EE the resolver returns the user's
-// personal tenant whose ID is the user ID. Keeping them equal makes the test
-// pass under either policy.
+// setupSkillSearchTenant wires an in-memory DB for user "owner" and the
+// explicitly selected personal tenant "owner".
 func setupSkillSearchTenant(t *testing.T) {
 	t.Helper()
 	db := setupServiceTestDB(t)
@@ -94,7 +88,7 @@ func setupSkillSearchTenant(t *testing.T) {
 
 func skillSearchTestContext(t *testing.T) context.Context {
 	t.Helper()
-	return permission.WithIdentity(t.Context(), "owner", "")
+	return serviceTestContext(t, "owner", "owner")
 }
 
 // saveSkillSearchConfig inserts an active config row for owner/default.

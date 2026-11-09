@@ -2122,6 +2122,7 @@ func TestIngestionTaskServiceOpensRunWithDocumentPipelineVersion(t *testing.T) {
 		ID:             pipelineID,
 		UserID:         "user-1",
 		CanvasCategory: "dataflow_canvas",
+		TenantID:       sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("insert pipeline: %v", err)
 	}

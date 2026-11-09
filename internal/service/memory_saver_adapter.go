@@ -53,24 +53,15 @@ func (a *memorySaverAdapter) Save(ctx context.Context, req component.MemorySaveR
 			return fmt.Errorf("%w: canvas runtime state is required to use memory from an agent", permission.ErrInvalidPermission)
 		}
 		canvasID, _ := state.GetSysString("canvas_id")
-		stateUserID, _ := state.GetSysString("user_id")
-		stateTenantID, _ := state.GetSysString("tenant_id")
 		canvasID = strings.TrimSpace(canvasID)
-		stateUserID = strings.TrimSpace(stateUserID)
-		stateTenantID = strings.TrimSpace(stateTenantID)
 		if canvasID == "" {
 			return fmt.Errorf("%w: canvas id is required to use memory from an agent", permission.ErrInvalidPermission)
 		}
-		contextUserID := permission.UserIDFromContext(ctx)
-		if contextUserID == "" {
-			if stateUserID == "" {
-				return permission.ErrUnauthenticated
-			}
-			tenantID := permission.TenantIDFromContext(ctx)
-			if tenantID == "" {
-				tenantID = stateTenantID
-			}
-			ctx = permission.WithIdentity(ctx, stateUserID, tenantID)
+		if permission.UserIDFromContext(ctx) == "" {
+			return permission.ErrUnauthenticated
+		}
+		if permission.TenantIDFromContext(ctx) == "" {
+			return permission.ErrTenantContextMissing
 		}
 		checker := permission.NewDatabaseChecker(a.svc.db)
 		entry := permission.ResourceRef{Kind: permission.ResourceKindCanvas, ID: canvasID}

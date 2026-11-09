@@ -63,7 +63,7 @@ func TestSearchDAOGetDetailByID(t *testing.T) {
 
 	searchStatus := "1"
 	searchAvatar := "search-avatar"
-	if err := db.Create(&entity.Search{
+	if err := db.Create(&entity.Search{UserID: "tenant-1",
 		ID:           "search-1",
 		Avatar:       &searchAvatar,
 		TenantID:     "tenant-1",
@@ -118,7 +118,7 @@ func TestSearchDAOGetDetailByIDReturnsNilWhenJoinedUserIsInactive(t *testing.T) 
 	}
 
 	searchStatus := "1"
-	if err := db.Create(&entity.Search{
+	if err := db.Create(&entity.Search{UserID: "tenant-1",
 		ID:           "search-1",
 		TenantID:     "tenant-1",
 		Name:         "Search App",

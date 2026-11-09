@@ -29,6 +29,7 @@ import (
 	"ragflow/internal/entity"
 	"ragflow/internal/entity/models"
 	"ragflow/internal/permission"
+	fileservice "ragflow/internal/service/file"
 	"ragflow/internal/storage"
 	"ragflow/internal/tokenizer"
 	"strings"
@@ -700,7 +701,7 @@ func isTextFileForSkill(fileName string) bool {
 // Frontend finds space folder by listing folders under skills folder and matching by name
 func (s *SkillIndexerService) getSpaceFolderIDByName(ctx context.Context, tenantID, spaceName string) (string, error) {
 	// Get root folder
-	rootFolder, err := s.fileDAO.GetRootFolder(ctx, dao.DB, tenantID)
+	rootFolder, err := fileservice.GetOrCreateRootFolder(ctx, dao.DB)
 	if err != nil {
 		return "", fmt.Errorf("failed to get root folder: %w", err)
 	}

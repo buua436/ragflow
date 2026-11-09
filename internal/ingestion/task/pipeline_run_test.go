@@ -34,7 +34,9 @@ func TestPipelineExecutor_DefaultLoadDSL_UsesUserCanvas(t *testing.T) {
 
 	dslMap := entity.JSONMap{"dsl": map[string]any{"graph": map[string]any{"nodes": []any{}, "edges": []any{}}}}
 	title := "title 1"
-	if err := dao.NewUserCanvasDAO().Create(ctx, dao.DB, &entity.UserCanvas{Title: &title, ID: "canvas-1", UserID: "u1", Permission: "me", CanvasCategory: "agent_canvas", DSL: dslMap}); err != nil {
+	if err := dao.NewUserCanvasDAO().Create(ctx, dao.DB, &entity.UserCanvas{Title: &title, ID: "canvas-1", UserID: "u1", Permission: "me", CanvasCategory: "agent_canvas", DSL: dslMap,
+		TenantID: strPtr("u1"),
+	}); err != nil {
 		t.Fatalf("create user agent: %v", err)
 	}
 

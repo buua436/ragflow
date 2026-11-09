@@ -459,18 +459,15 @@ func (s *AgentService) DeleteAgentSessions(ctx context.Context, agentID string, 
 
 // ListAgentTags list agent tags
 func (s *AgentService) ListAgentTags(ctx context.Context, canvasCategory string) ([]AgentTagCount, common.ErrorCode, error) {
-	canvasScope, err := permission.NewDatabaseChecker(dao.DB).Scope(ctx, permission.ScopeQuery{
+	canvasScope, err := permission.NewDatabaseChecker(dao.DB).QueryScope(ctx, permission.ScopeQuery{
 		Kind:      permission.ResourceKindCanvas,
 		Operation: permission.OperationRead,
 	})
 	if err != nil {
 		return nil, common.CodeServerError, err
 	}
-	canvasIDs := canvasScope.ResourceIDs
-	if canvasScope.Mode == permission.ScopeNone {
-		canvasIDs = []string{}
-	}
-	counts, err := s.canvasDAO.ListTagsByCanvasIDs(ctx, dao.DB, canvasIDs, canvasCategory)
+	query := canvasScope.Apply(dao.DB.WithContext(ctx).Model(&entity.UserCanvas{}))
+	counts, err := s.canvasDAO.ListTags(ctx, query, canvasCategory)
 	if err != nil {
 		return nil, common.CodeServerError, err
 	}
@@ -649,7 +646,10 @@ func (s *AgentService) CreateAgentSession(ctx context.Context, req *CreateAgentS
 	if len(dsl) == 0 {
 		dsl = canvas.DSL
 	}
-	if err := validateAgentChatModels(ctx, canvas.EffectiveTenantID(), dsl); err != nil {
+	if canvas.TenantID == nil || strings.TrimSpace(*canvas.TenantID) == "" {
+		return nil, common.CodeDataError, permission.ErrTenantContextMissing
+	}
+	if err := validateAgentChatModels(ctx, strings.TrimSpace(*canvas.TenantID), dsl); err != nil {
 		if errors.Is(err, ErrAgentStorageError) {
 			return nil, common.CodeServerError, errors.New("Internal storage error while accessing the agent.")
 		}

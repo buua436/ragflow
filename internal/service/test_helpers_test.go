@@ -100,7 +100,14 @@ func serviceTestContext(t *testing.T, userID, tenantID string, additionalMemberI
 		sqlDB, err := dao.DB.DB()
 		if err == nil && sqlDB.Ping() == nil {
 			memberIDs := append([]string{userID}, additionalMemberIDs...)
+			ownerUserID := userID
 			if dao.DB.Migrator().HasTable(&entity.UserTenant{}) {
+				var owner entity.UserTenant
+				if err := dao.DB.Where("tenant_id = ? AND role = ? AND status = ?", tenantID, string(permission.RoleOwner), entity.TenantMembershipStatusJoined).Take(&owner).Error; err == nil {
+					ownerUserID = owner.UserID
+				} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+					t.Fatalf("load test tenant owner: %v", err)
+				}
 				for _, memberID := range memberIDs {
 					if memberID == "" {
 						continue
@@ -113,7 +120,7 @@ func serviceTestContext(t *testing.T, userID, tenantID string, additionalMemberI
 						continue
 					}
 					role := string(permission.RoleNormal)
-					if memberID == tenantID {
+					if memberID == ownerUserID {
 						role = string(permission.RoleOwner)
 					}
 					status := entity.TenantMembershipStatusJoined
@@ -124,7 +131,7 @@ func serviceTestContext(t *testing.T, userID, tenantID string, additionalMemberI
 					}
 				}
 			}
-			if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, tenantID, memberIDs...); err != nil {
+			if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, tenantID, ownerUserID, memberIDs...); err != nil {
 				t.Fatalf("prepare enterprise permission fixture: %v", err)
 			}
 		}
@@ -235,7 +242,7 @@ func (fakeChatDocEngine) SupportsPageRank() bool                   { return fals
 // insertTestKB inserts a test Knowledgebase row.
 func insertTestKB(t *testing.T, id, tenantID string, docNum, tokenNum, chunkNum int64) {
 	t.Helper()
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "user-1",
 		ID:         id,
 		TenantID:   tenantID,
 		Name:       "test-kb",

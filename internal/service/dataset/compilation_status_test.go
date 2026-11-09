@@ -73,7 +73,7 @@ func TestCompilationQueueCountsPreserveDuplicatesAndRouting(t *testing.T) {
 func insertCompilationOwnerKB(t *testing.T, kbID, userID string) {
 	t.Helper()
 	status := string(entity.StatusValid)
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: userID,
 		ID:         kbID,
 		TenantID:   userID,
 		Name:       "compile-status-kb",

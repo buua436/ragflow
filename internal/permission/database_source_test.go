@@ -1,4 +1,4 @@
-//go:build !enterprise
+//go:build !ee
 
 package permission
 
@@ -35,12 +35,16 @@ func TestDatabaseCheckerAuthorizesDatasetFromPersistedRows(t *testing.T) {
 
 	valid := string(entity.StatusValid)
 	dataset := entity.Knowledgebase{
-		ID: "dataset-1", TenantID: "tenant-1", CreatedBy: "creator-1",
+		ID: "dataset-1", UserID: "dataset-owner", TenantID: "tenant-1", CreatedBy: "creator-1",
 		Permission: string(entity.TenantPermissionTeam), Status: &valid,
 	}
 	ownerMembership := entity.UserTenant{
 		ID: "owner-membership", UserID: "tenant-owner", TenantID: dataset.TenantID,
 		Role: string(RoleOwner), Status: &valid,
+	}
+	resourceOwnerMembership := entity.UserTenant{
+		ID: "resource-owner-membership", UserID: dataset.UserID, TenantID: dataset.TenantID,
+		Role: string(RoleNormal), Status: &valid,
 	}
 	membership := entity.UserTenant{
 		ID: "membership-1", UserID: "member-1", TenantID: dataset.TenantID,
@@ -55,6 +59,9 @@ func TestDatabaseCheckerAuthorizesDatasetFromPersistedRows(t *testing.T) {
 	if err := db.Create(&ownerMembership).Error; err != nil {
 		t.Fatalf("create owner membership: %v", err)
 	}
+	if err := db.Create(&resourceOwnerMembership).Error; err != nil {
+		t.Fatalf("create resource owner membership: %v", err)
+	}
 
 	checker := newCommunityDatabaseChecker(db)
 	subject := permissionTestIdentity{UserID: membership.UserID}
@@ -65,8 +72,8 @@ func TestDatabaseCheckerAuthorizesDatasetFromPersistedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load dataset authorization facts: %v", err)
 	}
-	if len(resources) != 1 || resources[0].OwnerUserID != ownerMembership.UserID || resources[0].CreatedBy != dataset.CreatedBy {
-		t.Fatalf("dataset resource = %+v, want tenant owner %q and creator %q", resources, ownerMembership.UserID, dataset.CreatedBy)
+	if len(resources) != 1 || resources[0].OwnerUserID != dataset.UserID || resources[0].CreatedBy != dataset.CreatedBy {
+		t.Fatalf("dataset resource = %+v, want resource owner %q and creator %q", resources, dataset.UserID, dataset.CreatedBy)
 	}
 
 	ref := ResourceRef{Kind: ResourceKindDataset, ID: dataset.ID}
@@ -93,8 +100,11 @@ func TestDatabaseCheckerAuthorizesDatasetFromPersistedRows(t *testing.T) {
 	if err := checker.CheckResource(WithIdentity(context.Background(), adminMembership.UserID, ""), ref, OperationRead); !errors.Is(err, ErrPermissionDenied) {
 		t.Errorf("CheckResource(admin member) error = %v, want %v", err, ErrPermissionDenied)
 	}
-	if err := checker.CheckResource(WithIdentity(context.Background(), ownerMembership.UserID, ""), ref, OperationDelete); err != nil {
-		t.Errorf("tenant owner CheckResource(delete dataset) error = %v, want nil", err)
+	if err := checker.CheckResource(WithIdentity(context.Background(), ownerMembership.UserID, ""), ref, OperationDelete); !errors.Is(err, ErrPermissionDenied) {
+		t.Errorf("tenant owner CheckResource(delete dataset) error = %v, want permission denied", err)
+	}
+	if err := checker.CheckResource(WithIdentity(context.Background(), resourceOwnerMembership.UserID, resourceOwnerMembership.TenantID), ref, OperationDelete); err != nil {
+		t.Errorf("resource owner CheckResource(delete dataset) error = %v, want nil", err)
 	}
 
 	access, err := checker.ResolveAccess(WithIdentity(context.Background(), subject.UserID, subject.TenantID), ref)
@@ -181,7 +191,7 @@ func TestDatabaseCheckerRejectsPrivateDatasetForOtherTenantMember(t *testing.T) 
 
 	valid := string(entity.StatusValid)
 	dataset := entity.Knowledgebase{
-		ID: "dataset-private", TenantID: "tenant-1", CreatedBy: "creator-1",
+		ID: "dataset-private", UserID: "creator-1", TenantID: "tenant-1", CreatedBy: "creator-1",
 		Permission: string(entity.TenantPermissionMe), Status: &valid,
 	}
 	membership := entity.UserTenant{
@@ -222,9 +232,9 @@ func TestDatabaseCheckerScopesDatasetsToMembershipAndVisibility(t *testing.T) {
 
 	valid := string(entity.StatusValid)
 	datasets := []entity.Knowledgebase{
-		{ID: "team-visible", TenantID: "member-tenant", CreatedBy: "tenant-owner", Permission: string(entity.TenantPermissionTeam), Status: &valid},
-		{ID: "private-hidden", TenantID: "member-tenant", CreatedBy: "tenant-owner", Permission: string(entity.TenantPermissionMe), Status: &valid},
-		{ID: "outside-tenant", TenantID: "other-tenant", CreatedBy: "other-owner", Permission: string(entity.TenantPermissionTeam), Status: &valid},
+		{ID: "team-visible", UserID: "tenant-owner", TenantID: "member-tenant", CreatedBy: "tenant-owner", Permission: string(entity.TenantPermissionTeam), Status: &valid},
+		{ID: "private-hidden", UserID: "tenant-owner", TenantID: "member-tenant", CreatedBy: "tenant-owner", Permission: string(entity.TenantPermissionMe), Status: &valid},
+		{ID: "outside-tenant", UserID: "other-owner", TenantID: "other-tenant", CreatedBy: "other-owner", Permission: string(entity.TenantPermissionTeam), Status: &valid},
 	}
 	for i := range datasets {
 		if err := db.Create(&datasets[i]).Error; err != nil {
@@ -244,23 +254,23 @@ func TestDatabaseCheckerScopesDatasetsToMembershipAndVisibility(t *testing.T) {
 	}
 
 	checker := newCommunityDatabaseChecker(db)
-	scope, err := checker.Scope(WithIdentity(context.Background(), "member-user", ""), ScopeQuery{
+	scope, err := checker.scope(WithIdentity(context.Background(), "member-user", ""), ScopeQuery{
 		Kind: ResourceKindDataset, Operation: OperationRead,
 	})
 	if err != nil {
 		t.Fatalf("Scope(datasets) error = %v", err)
 	}
-	if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != "team-visible" {
+	if scope.Mode != scopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != "team-visible" {
 		t.Fatalf("Scope(datasets) = %+v, want only the team-visible dataset", scope)
 	}
 
-	adminScope, err := checker.Scope(WithIdentity(context.Background(), "admin-user", ""), ScopeQuery{
+	adminScope, err := checker.scope(WithIdentity(context.Background(), "admin-user", ""), ScopeQuery{
 		Kind: ResourceKindDataset, Operation: OperationRead,
 	})
 	if err != nil {
 		t.Fatalf("Scope(datasets, admin) error = %v", err)
 	}
-	if adminScope.Mode != ScopeNone {
+	if adminScope.Mode != scopeNone {
 		t.Fatalf("Scope(datasets, admin) = %+v, want no accessible datasets", adminScope)
 	}
 
@@ -337,6 +347,42 @@ func TestCheckerQueryScopeFallsBackToAuthorizedIDs(t *testing.T) {
 	}
 }
 
+func TestModelProviderQueryScopeDoesNotInferTenantIDAsOwner(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+url.QueryEscape(t.Name())+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&entity.UserTenant{}, &entity.TenantModelProvider{}); err != nil {
+		t.Fatalf("migrate model provider tables: %v", err)
+	}
+	valid := string(entity.StatusValid)
+	if err := db.Create(&entity.UserTenant{
+		ID: "member-membership", UserID: "member-user", TenantID: "team-tenant",
+		Role: string(RoleNormal), Status: &valid,
+	}).Error; err != nil {
+		t.Fatalf("create member membership: %v", err)
+	}
+	if err := db.Create(&entity.TenantModelProvider{
+		ID: "legacy-provider", UserID: "team-tenant", TenantID: "team-tenant", ProviderName: "OpenAI",
+	}).Error; err != nil {
+		t.Fatalf("create model provider: %v", err)
+	}
+
+	scope, err := newCommunityDatabaseChecker(db).QueryScope(WithIdentity(context.Background(), "member-user", "team-tenant"), ScopeQuery{
+		Kind: ResourceKindModelProvider, Operation: OperationRead,
+	})
+	if err != nil {
+		t.Fatalf("QueryScope(model providers): %v", err)
+	}
+	var ids []string
+	if err := scope.Apply(db.Model(&entity.TenantModelProvider{})).Pluck("id", &ids).Error; err != nil {
+		t.Fatalf("query scoped model providers: %v", err)
+	}
+	if len(ids) != 0 {
+		t.Fatalf("model providers = %v, want none without an owner membership", ids)
+	}
+}
+
 func TestDatabaseCheckerSharedCanvasRestrictsOwnerOperations(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+url.QueryEscape(t.Name())+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
@@ -346,10 +392,12 @@ func TestDatabaseCheckerSharedCanvasRestrictsOwnerOperations(t *testing.T) {
 		t.Fatalf("migrate permission tables: %v", err)
 	}
 	valid := string(entity.StatusValid)
+	ownerTenantID := "owner-1"
+	otherOwnerTenantID := "owner-2"
 	canvases := []entity.UserCanvas{
-		{ID: "team-canvas", UserID: "owner-1", Permission: string(entity.TenantPermissionTeam)},
-		{ID: "private-canvas", UserID: "owner-1", Permission: string(entity.TenantPermissionMe)},
-		{ID: "other-team-canvas", UserID: "owner-2", Permission: string(entity.TenantPermissionTeam)},
+		{ID: "team-canvas", UserID: "owner-1", TenantID: &ownerTenantID, Permission: string(entity.TenantPermissionTeam)},
+		{ID: "private-canvas", UserID: "owner-1", TenantID: &ownerTenantID, Permission: string(entity.TenantPermissionMe)},
+		{ID: "other-team-canvas", UserID: "owner-2", TenantID: &otherOwnerTenantID, Permission: string(entity.TenantPermissionTeam)},
 	}
 	for i := range canvases {
 		if err := db.Create(&canvases[i]).Error; err != nil {
@@ -399,14 +447,76 @@ func TestDatabaseCheckerSharedCanvasRestrictsOwnerOperations(t *testing.T) {
 		t.Errorf("outsider CheckResource(read) error = %v, want permission denied", err)
 	}
 
-	scope, err := checker.Scope(WithIdentity(context.Background(), membership.UserID, ""), ScopeQuery{
+	scope, err := checker.scope(WithIdentity(context.Background(), membership.UserID, ""), ScopeQuery{
 		Kind: ResourceKindCanvas, Operation: OperationRead,
 	})
 	if err != nil {
 		t.Fatalf("Scope(canvases) error = %v", err)
 	}
-	if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != teamCanvas.ID {
+	if scope.Mode != scopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != teamCanvas.ID {
 		t.Fatalf("Scope(canvases) = %+v, want only team-canvas", scope)
+	}
+}
+
+func TestCheckerQueryScopeOwnerFilterUsesResourceOwnerUserID(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:"+url.QueryEscape(t.Name())+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.AutoMigrate(&entity.UserCanvas{}, &entity.UserTenant{}); err != nil {
+		t.Fatalf("migrate permission tables: %v", err)
+	}
+	valid := string(entity.StatusValid)
+	tenantID := "tenant-uuid"
+	canvases := []entity.UserCanvas{
+		{ID: "owned-canvas", UserID: "owner-user", TenantID: &tenantID, Permission: string(entity.TenantPermissionMe)},
+		{ID: "other-canvas", UserID: "other-user", TenantID: &tenantID, Permission: string(entity.TenantPermissionMe)},
+	}
+	if err := db.Create(&canvases).Error; err != nil {
+		t.Fatalf("create canvases: %v", err)
+	}
+	memberships := []entity.UserTenant{
+		{ID: "tenant-owner", UserID: "tenant-owner-user", TenantID: tenantID, Role: string(RoleOwner), Status: &valid},
+		{ID: "resource-owner", UserID: "owner-user", TenantID: tenantID, Role: string(RoleNormal), Status: &valid},
+	}
+	if err := db.Create(&memberships).Error; err != nil {
+		t.Fatalf("create memberships: %v", err)
+	}
+
+	checker := newCommunityDatabaseChecker(db)
+	ctx := WithIdentity(context.Background(), "owner-user", tenantID)
+	for _, test := range []struct {
+		name         string
+		ownerUserIDs []string
+		tenantIDs    []string
+		wantIDs      []string
+	}{
+		{name: "resource owner", ownerUserIDs: []string{"owner-user"}, tenantIDs: []string{tenantID}, wantIDs: []string{"owned-canvas"}},
+		{name: "tenant id is not an owner user id", ownerUserIDs: []string{tenantID}, wantIDs: []string{}},
+		{name: "another owner cannot widen authorization", ownerUserIDs: []string{"other-user"}, wantIDs: []string{}},
+		{name: "tenant filter only narrows", tenantIDs: []string{"different-tenant"}, wantIDs: []string{}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scope, err := checker.QueryScope(ctx, ScopeQuery{
+				Kind: ResourceKindCanvas, Operation: OperationRead,
+				OwnerUserIDs: test.ownerUserIDs, TenantIDs: test.tenantIDs,
+			})
+			if err != nil {
+				t.Fatalf("QueryScope(canvases): %v", err)
+			}
+			var ids []string
+			if err := scope.Apply(db.Model(&entity.UserCanvas{})).Order("user_canvas.id").Pluck("user_canvas.id", &ids).Error; err != nil {
+				t.Fatalf("query scoped canvases: %v", err)
+			}
+			if len(ids) != len(test.wantIDs) {
+				t.Fatalf("QueryScope returned %v, want %v", ids, test.wantIDs)
+			}
+			for i := range ids {
+				if ids[i] != test.wantIDs[i] {
+					t.Fatalf("QueryScope returned %v, want %v", ids, test.wantIDs)
+				}
+			}
+		})
 	}
 }
 
@@ -438,13 +548,13 @@ func TestDatabaseCheckerListsTenantCanvasCreatedByAnotherMember(t *testing.T) {
 		t.Fatalf("create canvases: %v", err)
 	}
 
-	scope, err := newCommunityDatabaseChecker(db).Scope(WithIdentity(context.Background(), membership.UserID, ""), ScopeQuery{
+	scope, err := newCommunityDatabaseChecker(db).scope(WithIdentity(context.Background(), membership.UserID, ""), ScopeQuery{
 		Kind: ResourceKindCanvas, Operation: OperationRead,
 	})
 	if err != nil {
 		t.Fatalf("Scope(canvases) error = %v", err)
 	}
-	if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != "shared-canvas" {
+	if scope.Mode != scopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != "shared-canvas" {
 		t.Fatalf("Scope(canvases) = %+v, want only shared-canvas", scope)
 	}
 }
@@ -457,7 +567,8 @@ func TestDatabaseCheckerRestrictsAgentSessionRunToCreator(t *testing.T) {
 	if err := db.AutoMigrate(&entity.UserCanvas{}, &entity.API4Conversation{}); err != nil {
 		t.Fatalf("migrate permission tables: %v", err)
 	}
-	if err := db.Create(&entity.UserCanvas{ID: "canvas-1", UserID: "canvas-owner"}).Error; err != nil {
+	canvasTenantID := "canvas-owner"
+	if err := db.Create(&entity.UserCanvas{ID: "canvas-1", UserID: "canvas-owner", TenantID: &canvasTenantID}).Error; err != nil {
 		t.Fatalf("create canvas: %v", err)
 	}
 	if err := db.Create(&entity.API4Conversation{ID: "session-1", DialogID: "canvas-1", UserID: "session-owner"}).Error; err != nil {
@@ -475,13 +586,13 @@ func TestDatabaseCheckerRestrictsAgentSessionRunToCreator(t *testing.T) {
 		t.Errorf("outsider CheckResource(run) error = %v, want permission denied", err)
 	}
 
-	scope, err := checker.Scope(WithIdentity(context.Background(), "session-owner", ""), ScopeQuery{
+	scope, err := checker.scope(WithIdentity(context.Background(), "session-owner", ""), ScopeQuery{
 		Kind: ResourceKindAgentSession, Parent: ResourceRef{Kind: ResourceKindCanvas, ID: "canvas-1"}, Operation: OperationRun,
 	})
 	if err != nil {
 		t.Fatalf("Scope(agent sessions) error = %v", err)
 	}
-	if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != session.ID {
+	if scope.Mode != scopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != session.ID {
 		t.Fatalf("Scope(agent sessions) = %+v, want only session-1", scope)
 	}
 }
@@ -497,8 +608,8 @@ func TestDatabaseCheckerAuthorizesMemoryFromPersistedRows(t *testing.T) {
 
 	valid := string(entity.StatusValid)
 	memories := []entity.Memory{
-		{ID: "team-memory", Name: "team", TenantID: "team-1", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionTeam), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
-		{ID: "private-memory", Name: "private", TenantID: "owner-1", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionMe), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
+		{ID: "team-memory", Name: "team", UserID: "memory-owner", TenantID: "team-1", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionTeam), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
+		{ID: "private-memory", Name: "private", UserID: "owner-1", TenantID: "owner-1", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionMe), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
 	}
 	for i := range memories {
 		if err := db.Create(&memories[i]).Error; err != nil {
@@ -524,8 +635,8 @@ func TestDatabaseCheckerAuthorizesMemoryFromPersistedRows(t *testing.T) {
 		t.Fatalf("loaded %d memory resources, want 2", len(resources))
 	}
 	for _, resource := range resources {
-		if resource.TenantID != resource.OwnerUserID {
-			t.Errorf("memory resource %q has tenant %q and owner %q; current memory schema uses tenant_id as owner identity", resource.Ref.ID, resource.TenantID, resource.OwnerUserID)
+		if resource.Ref.ID == "team-memory" && (resource.TenantID == resource.OwnerUserID || resource.OwnerUserID != "memory-owner") {
+			t.Errorf("memory resource %q has tenant %q and owner %q; want persisted owner separate from tenant", resource.Ref.ID, resource.TenantID, resource.OwnerUserID)
 		}
 	}
 	if err := checker.CheckResource(WithIdentity(context.Background(), membership.UserID, ""), teamRef, OperationRead); err != nil {
@@ -558,10 +669,10 @@ func TestDatabaseCheckerScopesMemoriesToOwnerAndTeamMembership(t *testing.T) {
 	}
 
 	memories := []entity.Memory{
-		{ID: "owner-private", Name: "owner", TenantID: "member-1", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionMe), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
-		{ID: "team-visible", Name: "team", TenantID: "team-1", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionTeam), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
-		{ID: "team-private", Name: "private", TenantID: "team-1", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionMe), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
-		{ID: "other-team", Name: "other", TenantID: "other-tenant", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionTeam), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
+		{ID: "owner-private", Name: "owner", UserID: "member-1", TenantID: "member-1", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionMe), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
+		{ID: "team-visible", Name: "team", UserID: "team-owner", TenantID: "team-1", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionTeam), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
+		{ID: "team-private", Name: "private", UserID: "team-owner", TenantID: "team-1", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionMe), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
+		{ID: "other-team", Name: "other", UserID: "other-owner", TenantID: "other-tenant", StorageType: "table", EmbdID: "embedding", LLMID: "chat", Permissions: string(entity.TenantPermissionTeam), MemorySize: 1024, ForgettingPolicy: "FIFO", Temperature: 0.5},
 	}
 	for i := range memories {
 		if err := db.Create(&memories[i]).Error; err != nil {
@@ -570,6 +681,7 @@ func TestDatabaseCheckerScopesMemoriesToOwnerAndTeamMembership(t *testing.T) {
 	}
 	valid := string(entity.StatusValid)
 	memberships := []entity.UserTenant{
+		{ID: "member-personal", UserID: "member-1", TenantID: "member-1", Role: string(RoleOwner), Status: &valid},
 		{ID: "member-team-1", UserID: "member-1", TenantID: "team-1", Role: string(RoleNormal), Status: &valid},
 		{ID: "owner-other", UserID: "other-owner", TenantID: "other-tenant", Role: string(RoleOwner), Status: &valid},
 	}
@@ -579,13 +691,13 @@ func TestDatabaseCheckerScopesMemoriesToOwnerAndTeamMembership(t *testing.T) {
 		}
 	}
 
-	scope, err := newCommunityDatabaseChecker(db).Scope(WithIdentity(context.Background(), "member-1", ""), ScopeQuery{
+	scope, err := newCommunityDatabaseChecker(db).scope(WithIdentity(context.Background(), "member-1", ""), ScopeQuery{
 		Kind: ResourceKindMemory, Operation: OperationRead,
 	})
 	if err != nil {
 		t.Fatalf("Scope(memories) error = %v", err)
 	}
-	if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != 2 {
+	if scope.Mode != scopeIDs || len(scope.ResourceIDs) != 2 {
 		t.Fatalf("Scope(memories) = %+v, want owner-private and team-visible", scope)
 	}
 	got := map[string]bool{}
@@ -615,8 +727,8 @@ func TestDatabaseCheckerAuthorizesFilesThroughLinkedDatasetAccess(t *testing.T) 
 
 	valid := string(entity.StatusValid)
 	datasets := []entity.Knowledgebase{
-		{ID: "team-dataset", TenantID: "team-tenant", Name: "Team", EmbdID: "embedding", Permission: string(entity.TenantPermissionTeam), CreatedBy: "team-owner", Status: &valid},
-		{ID: "private-dataset", TenantID: "private-tenant", Name: "Private", EmbdID: "embedding", Permission: string(entity.TenantPermissionMe), CreatedBy: "private-owner", Status: &valid},
+		{ID: "team-dataset", UserID: "team-owner", TenantID: "team-tenant", Name: "Team", EmbdID: "embedding", Permission: string(entity.TenantPermissionTeam), CreatedBy: "team-owner", Status: &valid},
+		{ID: "private-dataset", UserID: "private-owner", TenantID: "private-tenant", Name: "Private", EmbdID: "embedding", Permission: string(entity.TenantPermissionMe), CreatedBy: "private-owner", Status: &valid},
 	}
 	for i := range datasets {
 		if err := db.Create(&datasets[i]).Error; err != nil {
@@ -624,8 +736,8 @@ func TestDatabaseCheckerAuthorizesFilesThroughLinkedDatasetAccess(t *testing.T) 
 		}
 	}
 	files := []entity.File{
-		{ID: "team-file", ParentID: "team-root", TenantID: "file-owner", CreatedBy: "file-creator", Name: "team.pdf", Type: "pdf"},
-		{ID: "private-file", ParentID: "private-root", TenantID: "file-owner", CreatedBy: "file-creator", Name: "private.pdf", Type: "pdf"},
+		{ID: "team-file", ParentID: "team-root", UserID: "file-creator", TenantID: "file-owner", CreatedBy: "file-creator", Name: "team.pdf", Type: "pdf"},
+		{ID: "private-file", ParentID: "private-root", UserID: "file-creator", TenantID: "file-owner", CreatedBy: "file-creator", Name: "private.pdf", Type: "pdf"},
 	}
 	for i := range files {
 		if err := db.Create(&files[i]).Error; err != nil {
@@ -633,8 +745,8 @@ func TestDatabaseCheckerAuthorizesFilesThroughLinkedDatasetAccess(t *testing.T) 
 		}
 	}
 	documents := []entity.Document{
-		{ID: "team-document", KbID: "team-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "team-owner", Suffix: "pdf", Status: &valid},
-		{ID: "private-document", KbID: "private-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "private-owner", Suffix: "pdf", Status: &valid},
+		{ID: "team-document", UserID: "team-owner", KbID: "team-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "team-owner", Suffix: "pdf", Status: &valid},
+		{ID: "private-document", UserID: "private-owner", KbID: "private-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "private-owner", Suffix: "pdf", Status: &valid},
 	}
 	for i := range documents {
 		if err := db.Create(&documents[i]).Error; err != nil {
@@ -694,7 +806,7 @@ func TestDatabaseCheckerAuthorizesFilesThroughLinkedDatasetAccess(t *testing.T) 
 	}
 }
 
-func TestDatabaseSourceResolvesFileOwnerFromItsTenant(t *testing.T) {
+func TestDatabaseSourceDoesNotInferFileOwnerFromItsTenant(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+url.QueryEscape(t.Name())+"?mode=memory&cache=shared"), &gorm.Config{})
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -703,13 +815,6 @@ func TestDatabaseSourceResolvesFileOwnerFromItsTenant(t *testing.T) {
 		t.Fatalf("migrate permission tables: %v", err)
 	}
 
-	valid := string(entity.StatusValid)
-	if err := db.Create(&entity.UserTenant{
-		ID: "tenant-owner-membership", UserID: "tenant-owner", TenantID: "tenant-1",
-		Role: string(RoleOwner), Status: &valid,
-	}).Error; err != nil {
-		t.Fatalf("create tenant owner membership: %v", err)
-	}
 	if err := db.Create(&entity.File{
 		ID: "legacy-file", TenantID: "tenant-1", CreatedBy: "", Name: "legacy.pdf", Type: "pdf",
 	}).Error; err != nil {
@@ -720,8 +825,8 @@ func TestDatabaseSourceResolvesFileOwnerFromItsTenant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load file authorization facts: %v", err)
 	}
-	if len(resources) != 1 || resources[0].TenantID != "tenant-1" || resources[0].OwnerUserID != "tenant-owner" {
-		t.Fatalf("file authorization facts = %+v, want tenant tenant-1 and owner tenant-owner", resources)
+	if len(resources) != 1 || resources[0].TenantID != "tenant-1" || resources[0].OwnerUserID != "" {
+		t.Fatalf("file authorization facts = %+v, want no inferred owner for tenant tenant-1", resources)
 	}
 }
 
@@ -734,11 +839,11 @@ func TestDatabaseCheckerScopesFilesAndFoldersToOwnedFolder(t *testing.T) {
 		t.Fatalf("migrate permission tables: %v", err)
 	}
 	files := []entity.File{
-		{ID: "root", ParentID: "root", TenantID: "user-1", CreatedBy: "user-1", Name: "/", Type: "folder"},
-		{ID: "child-file", ParentID: "root", TenantID: "user-1", CreatedBy: "user-1", Name: "notes.pdf", Type: "pdf"},
-		{ID: "child-folder", ParentID: "root", TenantID: "user-1", CreatedBy: "user-1", Name: "notes", Type: "folder"},
-		{ID: "nested-file", ParentID: "child-folder", TenantID: "user-1", CreatedBy: "user-1", Name: "nested.pdf", Type: "pdf"},
-		{ID: "other-tenant-file", ParentID: "root", TenantID: "user-2", CreatedBy: "user-2", Name: "private.pdf", Type: "pdf"},
+		{ID: "root", ParentID: "root", UserID: "user-1", TenantID: "user-1", CreatedBy: "user-1", Name: "/", Type: "folder"},
+		{ID: "child-file", ParentID: "root", UserID: "user-1", TenantID: "user-1", CreatedBy: "user-1", Name: "notes.pdf", Type: "pdf"},
+		{ID: "child-folder", ParentID: "root", UserID: "user-1", TenantID: "user-1", CreatedBy: "user-1", Name: "notes", Type: "folder"},
+		{ID: "nested-file", ParentID: "child-folder", UserID: "user-1", TenantID: "user-1", CreatedBy: "user-1", Name: "nested.pdf", Type: "pdf"},
+		{ID: "other-tenant-file", ParentID: "root", UserID: "user-2", TenantID: "user-2", CreatedBy: "user-2", Name: "private.pdf", Type: "pdf"},
 	}
 	for i := range files {
 		if err := db.Create(&files[i]).Error; err != nil {
@@ -754,13 +859,13 @@ func TestDatabaseCheckerScopesFilesAndFoldersToOwnedFolder(t *testing.T) {
 		{kind: ResourceKindFile, want: "child-file"},
 		{kind: ResourceKindFolder, want: "child-folder"},
 	} {
-		scope, err := checker.Scope(WithIdentity(context.Background(), "user-1", ""), ScopeQuery{
+		scope, err := checker.scope(WithIdentity(context.Background(), "user-1", ""), ScopeQuery{
 			Kind: test.kind, Parent: parent, Operation: OperationRead,
 		})
 		if err != nil {
 			t.Fatalf("Scope(%s) error = %v", test.kind, err)
 		}
-		if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != test.want {
+		if scope.Mode != scopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != test.want {
 			t.Errorf("Scope(%s) = %+v, want only %q", test.kind, scope, test.want)
 		}
 	}
@@ -771,20 +876,20 @@ func TestDatabaseCheckerScopesFilesAndFoldersToOwnedFolder(t *testing.T) {
 		t.Errorf("file ref to a folder CheckResource error = %v, want resource not found", err)
 	}
 	otherParent := ResourceRef{Kind: ResourceKindFolder, ID: "root"}
-	if scope, err := checker.Scope(WithIdentity(context.Background(), "user-2", ""), ScopeQuery{
+	if scope, err := checker.scope(WithIdentity(context.Background(), "user-2", ""), ScopeQuery{
 		Kind: ResourceKindFile, Parent: otherParent, Operation: OperationRead,
-	}); err != nil || scope.Mode != ScopeNone {
+	}); err != nil || scope.Mode != scopeNone {
 		t.Errorf("Scope(other user's folder) = (%+v, %v), want empty scope", scope, err)
 	}
 }
 
-func TestFileResourceFallsBackToTenantOwnerWhenCreatorIsMissing(t *testing.T) {
+func TestFileResourceDoesNotInferOwnerFromTenantID(t *testing.T) {
 	resource := fileResource(ResourceKindFile, &entity.File{
 		ID:       "legacy-file",
 		TenantID: "owner-user",
-	}, nil, nil, nil)
-	if resource.OwnerUserID != "owner-user" {
-		t.Fatalf("legacy file owner = %q, want tenant owner %q", resource.OwnerUserID, "owner-user")
+	}, nil, nil)
+	if resource.OwnerUserID != "" {
+		t.Fatalf("file owner = %q, want empty when the persisted owner is missing", resource.OwnerUserID)
 	}
 }
 
@@ -800,9 +905,9 @@ func TestDatabaseCheckerKeepsChatsPrivateToTheirOwner(t *testing.T) {
 	invalid := string(entity.StatusInvalid)
 	invited := entity.TenantMembershipStatusInvited
 	chats := []entity.Chat{
-		{ID: "team-chat", TenantID: "team-tenant", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DoRefer: "1", Status: &valid},
-		{ID: "inactive-chat", TenantID: "team-tenant", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DoRefer: "1", Status: &invalid},
-		{ID: "other-chat", TenantID: "other-tenant", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DoRefer: "1", Status: &valid},
+		{ID: "team-chat", UserID: "chat-owner", TenantID: "team-tenant", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DoRefer: "1", Status: &valid},
+		{ID: "inactive-chat", UserID: "chat-owner", TenantID: "team-tenant", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DoRefer: "1", Status: &invalid},
+		{ID: "other-chat", UserID: "other-owner", TenantID: "other-tenant", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DoRefer: "1", Status: &valid},
 	}
 	for i := range chats {
 		if err := db.Create(&chats[i]).Error; err != nil {
@@ -814,6 +919,12 @@ func TestDatabaseCheckerKeepsChatsPrivateToTheirOwner(t *testing.T) {
 	}
 	if err := db.Create(&membership).Error; err != nil {
 		t.Fatalf("create membership: %v", err)
+	}
+	ownerMembership := entity.UserTenant{
+		ID: "chat-owner-membership", UserID: "chat-owner", TenantID: "team-tenant", Role: string(RoleOwner), Status: &valid,
+	}
+	if err := db.Create(&ownerMembership).Error; err != nil {
+		t.Fatalf("create chat owner membership: %v", err)
 	}
 	inviteMembership := entity.UserTenant{
 		ID: "invite-team", UserID: "invite-1", TenantID: "team-tenant", Status: &invited,
@@ -830,7 +941,7 @@ func TestDatabaseCheckerKeepsChatsPrivateToTheirOwner(t *testing.T) {
 			t.Errorf("team member CheckResource(chat, %s) error = %v, want permission denied", operation, err)
 		}
 	}
-	if err := checker.CheckResource(WithIdentity(context.Background(), "team-tenant", ""), teamChat, OperationUpdate); err != nil {
+	if err := checker.CheckResource(WithIdentity(context.Background(), "chat-owner", ""), teamChat, OperationUpdate); err != nil {
 		t.Errorf("chat owner CheckResource(update) error = %v, want nil", err)
 	}
 	if err := checker.CheckResource(WithIdentity(context.Background(), "invite-1", ""), teamChat, OperationRead); !errors.Is(err, ErrPermissionDenied) {
@@ -839,19 +950,19 @@ func TestDatabaseCheckerKeepsChatsPrivateToTheirOwner(t *testing.T) {
 	if err := checker.CheckResource(WithIdentity(context.Background(), member.UserID, member.TenantID), ResourceRef{Kind: ResourceKindChat, ID: "inactive-chat"}, OperationRead); !errors.Is(err, ErrResourceNotFound) {
 		t.Errorf("inactive chat CheckResource(read) error = %v, want resource not found", err)
 	}
-	scope, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: ResourceKindChat, Operation: OperationRead})
+	scope, err := checker.scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: ResourceKindChat, Operation: OperationRead})
 	if err != nil {
 		t.Fatalf("Scope(chats) error = %v", err)
 	}
-	if scope.Mode != ScopeNone || len(scope.ResourceIDs) != 0 {
+	if scope.Mode != scopeNone || len(scope.ResourceIDs) != 0 {
 		t.Fatalf("team member Scope(chats) = %+v, want empty scope", scope)
 	}
 
-	ownerScope, err := checker.Scope(WithIdentity(context.Background(), "team-tenant", ""), ScopeQuery{Kind: ResourceKindChat, Operation: OperationRead})
+	ownerScope, err := checker.scope(WithIdentity(context.Background(), "chat-owner", "team-tenant"), ScopeQuery{Kind: ResourceKindChat, Operation: OperationRead})
 	if err != nil {
 		t.Fatalf("owner Scope(chats) error = %v", err)
 	}
-	if ownerScope.Mode != ScopeIDs || len(ownerScope.ResourceIDs) != 1 || ownerScope.ResourceIDs[0] != "team-chat" {
+	if ownerScope.Mode != scopeIDs || len(ownerScope.ResourceIDs) != 1 || ownerScope.ResourceIDs[0] != "team-chat" {
 		t.Fatalf("owner Scope(chats) = %+v, want only team-chat", ownerScope)
 	}
 }
@@ -866,7 +977,7 @@ func TestDatabaseCheckerScopesChatSessionsAndRestrictsMutations(t *testing.T) {
 	}
 	valid := string(entity.StatusValid)
 	chat := entity.Chat{
-		ID: "team-chat", TenantID: "team-tenant", LLMSetting: entity.JSONMap{},
+		ID: "team-chat", UserID: "chat-owner", TenantID: "team-tenant", LLMSetting: entity.JSONMap{},
 		PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DoRefer: "1", Status: &valid,
 	}
 	if err := db.Create(&chat).Error; err != nil {
@@ -911,7 +1022,7 @@ func TestDatabaseCheckerScopesChatSessionsAndRestrictsMutations(t *testing.T) {
 	if creatorAccess.Source != AccessSourceCreator {
 		t.Errorf("session creator access source = %q, want %q", creatorAccess.Source, AccessSourceCreator)
 	}
-	if err := checker.CheckResource(WithIdentity(context.Background(), chat.TenantID, ""), creatorSession, OperationDelete); err != nil {
+	if err := checker.CheckResource(WithIdentity(context.Background(), chat.UserID, chat.TenantID), creatorSession, OperationDelete); err != nil {
 		t.Errorf("chat owner CheckResource(session delete) error = %v, want nil", err)
 	}
 	if err := checker.CheckResource(WithIdentity(context.Background(), removedCreatorID, ""), ResourceRef{Kind: ResourceKindChatSession, ID: "removed-creator-session"}, OperationUpdate); !errors.Is(err, ErrPermissionDenied) {
@@ -921,14 +1032,38 @@ func TestDatabaseCheckerScopesChatSessionsAndRestrictsMutations(t *testing.T) {
 		t.Errorf("outsider CheckResource(session read) error = %v, want permission denied", err)
 	}
 
-	scope, err := checker.Scope(WithIdentity(context.Background(), reader.UserID, reader.TenantID), ScopeQuery{
+	scope, err := checker.scope(WithIdentity(context.Background(), reader.UserID, reader.TenantID), ScopeQuery{
 		Kind: ResourceKindChatSession, Parent: ResourceRef{Kind: ResourceKindChat, ID: chat.ID}, Operation: OperationRead,
 	})
 	if err != nil {
 		t.Fatalf("Scope(chat sessions) error = %v", err)
 	}
-	if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != 2 {
+	if scope.Mode != scopeIDs || len(scope.ResourceIDs) != 2 {
 		t.Fatalf("Scope(chat sessions) = %+v, want both sessions visible read-only", scope)
+	}
+
+	chatRef := ResourceRef{Kind: ResourceKindChat, ID: chat.ID}
+	ownerCtx := WithIdentity(context.Background(), chat.UserID, chat.TenantID)
+	queryScope, err := checker.QueryScope(ownerCtx, ScopeQuery{
+		Kind: ResourceKindChatSession, Parent: chatRef, Operation: OperationRead,
+		Entry: &chatRef, EntryOp: OperationRead,
+	})
+	if err != nil {
+		t.Fatalf("QueryScope(chat sessions) error = %v", err)
+	}
+	var scopedIDs []string
+	if err := queryScope.Apply(db.WithContext(ownerCtx).Model(&entity.ChatSession{})).Order("conversation.id").Pluck("conversation.id", &scopedIDs).Error; err != nil {
+		t.Fatalf("query scoped chat sessions: %v", err)
+	}
+	if len(scopedIDs) != 2 || scopedIDs[0] != "creator-session" || scopedIDs[1] != "removed-creator-session" {
+		t.Fatalf("QueryScope(chat sessions) IDs = %v, want both rows from the chat", scopedIDs)
+	}
+
+	if _, err := checker.QueryScope(WithIdentity(context.Background(), "outsider", ""), ScopeQuery{
+		Kind: ResourceKindChatSession, Parent: chatRef, Operation: OperationRead,
+		Entry: &chatRef, EntryOp: OperationRead,
+	}); !errors.Is(err, ErrPermissionDenied) {
+		t.Errorf("outsider QueryScope(chat sessions) error = %v, want permission denied", err)
 	}
 }
 
@@ -944,10 +1079,10 @@ func TestDatabaseCheckerKeepsSearchAppsPrivateToTheirCreator(t *testing.T) {
 	invalid := string(entity.StatusInvalid)
 	invited := entity.TenantMembershipStatusInvited
 	searchApps := []entity.Search{
-		{ID: "team-search", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "Team search", SearchConfig: entity.JSONMap{}, Status: &valid},
-		{ID: "member-search", TenantID: "member-1", CreatedBy: "member-1", Name: "Personal search", SearchConfig: entity.JSONMap{}, Status: &valid},
-		{ID: "other-search", TenantID: "other-tenant", CreatedBy: "other-owner", Name: "Other search", SearchConfig: entity.JSONMap{}, Status: &valid},
-		{ID: "inactive-search", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "Inactive search", SearchConfig: entity.JSONMap{}, Status: &invalid},
+		{ID: "team-search", UserID: "team-owner", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "Team search", SearchConfig: entity.JSONMap{}, Status: &valid},
+		{ID: "member-search", UserID: "member-1", TenantID: "member-1", CreatedBy: "member-1", Name: "Personal search", SearchConfig: entity.JSONMap{}, Status: &valid},
+		{ID: "other-search", UserID: "other-owner", TenantID: "other-tenant", CreatedBy: "other-owner", Name: "Other search", SearchConfig: entity.JSONMap{}, Status: &valid},
+		{ID: "inactive-search", UserID: "team-owner", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "Inactive search", SearchConfig: entity.JSONMap{}, Status: &invalid},
 	}
 	for i := range searchApps {
 		if err := db.Create(&searchApps[i]).Error; err != nil {
@@ -955,6 +1090,7 @@ func TestDatabaseCheckerKeepsSearchAppsPrivateToTheirCreator(t *testing.T) {
 		}
 	}
 	memberships := []entity.UserTenant{
+		{ID: "member-personal", UserID: "member-1", TenantID: "member-1", Role: string(RoleOwner), Status: &valid},
 		{ID: "member-team", UserID: "member-1", TenantID: "team-tenant", Role: string(RoleNormal), Status: &valid},
 		{ID: "owner-team", UserID: "team-owner", TenantID: "team-tenant", Role: string(RoleOwner), Status: &valid},
 		{ID: "invite-team", UserID: "invite-1", TenantID: "team-tenant", Status: &invited},
@@ -1002,18 +1138,18 @@ func TestDatabaseCheckerKeepsSearchAppsPrivateToTheirCreator(t *testing.T) {
 		t.Errorf("search authorization facts = %+v, want tenant team-tenant and creator/owner team-owner", got)
 	}
 
-	readScope, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: ResourceKindSearchApp, Operation: OperationRead})
+	readScope, err := checker.scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: ResourceKindSearchApp, Operation: OperationRead})
 	if err != nil {
 		t.Fatalf("Scope(search read) error = %v", err)
 	}
-	if readScope.Mode != ScopeIDs || len(readScope.ResourceIDs) != 1 || readScope.ResourceIDs[0] != "member-search" {
+	if readScope.Mode != scopeIDs || len(readScope.ResourceIDs) != 1 || readScope.ResourceIDs[0] != "member-search" {
 		t.Fatalf("Scope(search read) = %+v, want only member-search", readScope)
 	}
-	runScope, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: ResourceKindSearchApp, Operation: OperationRun})
+	runScope, err := checker.scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: ResourceKindSearchApp, Operation: OperationRun})
 	if err != nil {
 		t.Fatalf("Scope(search run) error = %v", err)
 	}
-	if runScope.Mode != ScopeIDs || len(runScope.ResourceIDs) != 1 || runScope.ResourceIDs[0] != "member-search" {
+	if runScope.Mode != scopeIDs || len(runScope.ResourceIDs) != 1 || runScope.ResourceIDs[0] != "member-search" {
 		t.Fatalf("Scope(search run) = %+v, want only member-search", runScope)
 	}
 }
@@ -1030,9 +1166,9 @@ func TestDatabaseCheckerAuthorizesConnectorsAndSyncTasks(t *testing.T) {
 	valid := string(entity.StatusValid)
 	invited := entity.TenantMembershipStatusInvited
 	connectors := []entity.Connector{
-		{ID: "personal-connector", TenantID: "team-member", Name: "Personal", Source: "rest", InputType: "poll", Config: entity.JSONMap{}, Status: "5"},
-		{ID: "team-connector", TenantID: "team-tenant", Name: "Team", Source: "rest", InputType: "poll", Config: entity.JSONMap{}, Status: "5"},
-		{ID: "other-connector", TenantID: "other-tenant", Name: "Other", Source: "rest", InputType: "poll", Config: entity.JSONMap{}, Status: "5"},
+		{ID: "personal-connector", UserID: "team-member", TenantID: "team-member", Name: "Personal", Source: "rest", InputType: "poll", Config: entity.JSONMap{}, Status: "5"},
+		{ID: "team-connector", UserID: "team-owner", TenantID: "team-tenant", Name: "Team", Source: "rest", InputType: "poll", Config: entity.JSONMap{}, Status: "5"},
+		{ID: "other-connector", UserID: "other-owner", TenantID: "other-tenant", Name: "Other", Source: "rest", InputType: "poll", Config: entity.JSONMap{}, Status: "5"},
 	}
 	for i := range connectors {
 		if err := db.Create(&connectors[i]).Error; err != nil {
@@ -1041,6 +1177,7 @@ func TestDatabaseCheckerAuthorizesConnectorsAndSyncTasks(t *testing.T) {
 	}
 	links := []entity.Connector2Kb{
 		{ID: "link-1", ConnectorID: "team-connector", KbID: "dataset-1", AutoParse: "1"},
+		{ID: "personal-link", ConnectorID: "personal-connector", KbID: "personal-dataset", AutoParse: "1"},
 	}
 	for i := range links {
 		if err := db.Create(&links[i]).Error; err != nil {
@@ -1048,17 +1185,25 @@ func TestDatabaseCheckerAuthorizesConnectorsAndSyncTasks(t *testing.T) {
 		}
 	}
 	dataset := entity.Knowledgebase{
-		ID: "dataset-1", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "Team dataset",
+		ID: "dataset-1", UserID: "team-owner", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "Team dataset",
 		EmbdID: "embedding", Permission: string(entity.TenantPermissionTeam), Status: &valid,
 	}
 	if err := db.Create(&dataset).Error; err != nil {
 		t.Fatalf("create dataset: %v", err)
+	}
+	personalDataset := entity.Knowledgebase{
+		ID: "personal-dataset", UserID: "team-member", TenantID: "team-member", CreatedBy: "team-member", Name: "Personal dataset",
+		EmbdID: "embedding", Permission: string(entity.TenantPermissionMe), Status: &valid,
+	}
+	if err := db.Create(&personalDataset).Error; err != nil {
+		t.Fatalf("create personal dataset: %v", err)
 	}
 	tasks := []entity.SyncLogs{
 		{ID: "linked-task", ConnectorID: "team-connector", TaskType: "sync", Status: string(entity.TaskStatusFail), ErrorMsg: "failed", KbID: "dataset-1"},
 		{ID: "completed-task", ConnectorID: "team-connector", TaskType: "sync", Status: string(entity.TaskStatusDone), ErrorMsg: "", KbID: "dataset-1"},
 		{ID: "prune-task", ConnectorID: "team-connector", TaskType: "prune", Status: "3", ErrorMsg: "", KbID: "dataset-1"},
 		{ID: "unlinked-task", ConnectorID: "team-connector", TaskType: "sync", Status: "3", ErrorMsg: "", KbID: "dataset-unlinked"},
+		{ID: "personal-task", ConnectorID: "personal-connector", TaskType: "sync", Status: string(entity.TaskStatusDone), ErrorMsg: "", KbID: "personal-dataset"},
 	}
 	for i := range tasks {
 		if err := db.Create(&tasks[i]).Error; err != nil {
@@ -1066,6 +1211,7 @@ func TestDatabaseCheckerAuthorizesConnectorsAndSyncTasks(t *testing.T) {
 		}
 	}
 	memberships := []entity.UserTenant{
+		{ID: "member-personal", UserID: "team-member", TenantID: "team-member", Role: string(RoleOwner), Status: &valid},
 		{ID: "member-link", UserID: "team-member", TenantID: "team-tenant", Role: string(RoleNormal), Status: &valid},
 		{ID: "owner-link", UserID: "team-owner", TenantID: "team-tenant", Role: string(RoleOwner), Status: &valid},
 		{ID: "invite-link", UserID: "invited-user", TenantID: "team-tenant", Status: &invited},
@@ -1078,64 +1224,131 @@ func TestDatabaseCheckerAuthorizesConnectorsAndSyncTasks(t *testing.T) {
 
 	checker := newCommunityDatabaseChecker(db)
 	member := permissionTestIdentity{UserID: "team-member"}
+	teamCtx := WithIdentity(context.Background(), member.UserID, "team-tenant")
+	personalCtx := WithIdentity(context.Background(), member.UserID, "team-member")
 	teamConnector := ResourceRef{Kind: ResourceKindConnector, ID: "team-connector"}
 	for _, operation := range []Operation{OperationRun, OperationUse} {
-		if err := checker.CheckResource(WithIdentity(context.Background(), member.UserID, member.TenantID), teamConnector, operation); err != nil {
+		if err := checker.CheckResource(teamCtx, teamConnector, operation); err != nil {
 			t.Errorf("team member CheckResource(connector %s) error = %v, want nil", operation, err)
 		}
 	}
 	for _, operation := range []Operation{OperationRead, OperationUpdate, OperationDelete} {
-		if err := checker.CheckResource(WithIdentity(context.Background(), member.UserID, member.TenantID), teamConnector, operation); !errors.Is(err, ErrPermissionDenied) {
+		if err := checker.CheckResource(teamCtx, teamConnector, operation); !errors.Is(err, ErrPermissionDenied) {
 			t.Errorf("team member CheckResource(connector %s) error = %v, want permission denied", operation, err)
 		}
 	}
-	if err := checker.CheckResource(WithIdentity(context.Background(), "invited-user", ""), teamConnector, OperationRead); !errors.Is(err, ErrPermissionDenied) {
+	if err := checker.CheckResource(WithIdentity(context.Background(), "invited-user", "team-tenant"), teamConnector, OperationRead); !errors.Is(err, ErrPermissionDenied) {
 		t.Errorf("invited user CheckResource(connector read) error = %v, want permission denied", err)
 	}
-	if err := checker.CheckResource(WithIdentity(context.Background(), "outsider", ""), teamConnector, OperationRead); !errors.Is(err, ErrPermissionDenied) {
+	if err := checker.CheckResource(WithIdentity(context.Background(), "outsider", "team-tenant"), teamConnector, OperationRead); !errors.Is(err, ErrPermissionDenied) {
 		t.Errorf("outsider CheckResource(connector read) error = %v, want permission denied", err)
 	}
-	if err := checker.CheckResource(WithIdentity(context.Background(), member.UserID, member.TenantID), ResourceRef{Kind: ResourceKindConnector, ID: "personal-connector"}, OperationRead); err != nil {
+	if err := checker.CheckResource(personalCtx, ResourceRef{Kind: ResourceKindConnector, ID: "personal-connector"}, OperationRead); err != nil {
 		t.Errorf("connector owner CheckResource(read) error = %v, want nil", err)
+	}
+	if err := checker.CheckResource(personalCtx, teamConnector, OperationUse); !errors.Is(err, ErrResourceNotFound) {
+		t.Errorf("cross-tenant connector CheckResource(use) error = %v, want resource not found", err)
 	}
 
 	linkedTask := ResourceRef{Kind: ResourceKindSyncTask, ID: "linked-task"}
 	for _, operation := range []Operation{OperationRead, OperationRun} {
-		if err := checker.CheckResource(WithIdentity(context.Background(), member.UserID, member.TenantID), linkedTask, operation); err != nil {
+		if err := checker.CheckResource(teamCtx, linkedTask, operation); err != nil {
 			t.Errorf("team member CheckResource(sync task %s) error = %v, want nil", operation, err)
 		}
 	}
-	if err := checker.CheckResource(WithIdentity(context.Background(), member.UserID, member.TenantID), linkedTask, OperationDelete); !errors.Is(err, ErrPermissionDenied) {
+	if err := checker.CheckResource(teamCtx, linkedTask, OperationDelete); !errors.Is(err, ErrPermissionDenied) {
 		t.Errorf("team member CheckResource(sync task delete) error = %v, want permission denied", err)
 	}
-	if err := checker.CheckResource(WithIdentity(context.Background(), member.UserID, member.TenantID), ResourceRef{Kind: ResourceKindSyncTask, ID: "unlinked-task"}, OperationRead); !errors.Is(err, ErrResourceNotFound) {
+	if err := checker.CheckResource(teamCtx, ResourceRef{Kind: ResourceKindSyncTask, ID: "unlinked-task"}, OperationRead); !errors.Is(err, ErrResourceNotFound) {
 		t.Errorf("unlinked sync task CheckResource(read) error = %v, want resource not found", err)
 	}
-	if err := checker.CheckResource(WithIdentity(context.Background(), member.UserID, member.TenantID), ResourceRef{Kind: ResourceKindSyncTask, ID: "prune-task"}, OperationRun); !errors.Is(err, ErrPermissionDenied) {
+	if err := checker.CheckResource(teamCtx, ResourceRef{Kind: ResourceKindSyncTask, ID: "prune-task"}, OperationRun); !errors.Is(err, ErrPermissionDenied) {
 		t.Errorf("team member CheckResource(prune task run) error = %v, want permission denied", err)
 	}
-	if err := checker.CheckResource(WithIdentity(context.Background(), member.UserID, member.TenantID), ResourceRef{Kind: ResourceKindSyncTask, ID: "completed-task"}, OperationRun); !errors.Is(err, ErrPermissionDenied) {
+	if err := checker.CheckResource(teamCtx, ResourceRef{Kind: ResourceKindSyncTask, ID: "completed-task"}, OperationRun); !errors.Is(err, ErrPermissionDenied) {
 		t.Errorf("team member CheckResource(completed task run) error = %v, want permission denied", err)
 	}
 
-	connectorScope, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: ResourceKindConnector, Operation: OperationRead})
+	connectorScope, err := checker.scope(personalCtx, ScopeQuery{Kind: ResourceKindConnector, Operation: OperationRead})
 	if err != nil {
 		t.Fatalf("Scope(connectors) error = %v", err)
 	}
-	if connectorScope.Mode != ScopeIDs || len(connectorScope.ResourceIDs) != 1 || connectorScope.ResourceIDs[0] != "personal-connector" {
+	if connectorScope.Mode != scopeIDs || len(connectorScope.ResourceIDs) != 1 || connectorScope.ResourceIDs[0] != "personal-connector" {
 		t.Fatalf("Scope(connectors) = %+v, want personal connector only", connectorScope)
 	}
-	taskScope, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{
+	taskScope, err := checker.scope(teamCtx, ScopeQuery{
 		Kind: ResourceKindSyncTask, Parent: teamConnector, Operation: OperationRead,
 	})
 	if err != nil {
 		t.Fatalf("Scope(sync tasks) error = %v", err)
 	}
-	if taskScope.Mode != ScopeIDs || len(taskScope.ResourceIDs) != 3 {
+	if taskScope.Mode != scopeIDs || len(taskScope.ResourceIDs) != 3 {
 		t.Fatalf("Scope(sync tasks) = %+v, want linked sync and prune task logs", taskScope)
 	}
-	if _, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: ResourceKindSyncTask, Operation: OperationRead}); !errors.Is(err, ErrInvalidPermission) {
-		t.Errorf("Scope(sync tasks without connector) error = %v, want invalid permission", err)
+	tenantTaskScope, err := checker.scope(teamCtx, ScopeQuery{Kind: ResourceKindSyncTask, Operation: OperationRead})
+	if err != nil {
+		t.Fatalf("Scope(all tenant sync tasks) error = %v", err)
+	}
+	if tenantTaskScope.Mode != scopeIDs || len(tenantTaskScope.ResourceIDs) != 3 {
+		t.Fatalf("Scope(all tenant sync tasks) = %+v, want the three linked team tasks", tenantTaskScope)
+	}
+
+	memberCtx := teamCtx
+	teamTaskScope, err := checker.QueryScope(memberCtx, ScopeQuery{
+		Kind: ResourceKindSyncTask, Parent: teamConnector, Operation: OperationRead,
+		Entry: &teamConnector, EntryOp: OperationUse,
+	})
+	if err != nil {
+		t.Fatalf("QueryScope(team sync tasks) error = %v", err)
+	}
+	var teamTaskIDs []string
+	if err := teamTaskScope.Apply(db.WithContext(memberCtx).Model(&entity.SyncLogs{})).Order("sync_logs.id").Pluck("sync_logs.id", &teamTaskIDs).Error; err != nil {
+		t.Fatalf("query team sync tasks: %v", err)
+	}
+	if strings.Join(teamTaskIDs, ",") != "completed-task,linked-task,prune-task" {
+		t.Fatalf("QueryScope(team sync tasks) IDs = %v, want linked task rows only", teamTaskIDs)
+	}
+
+	teamRunScope, err := checker.QueryScope(memberCtx, ScopeQuery{
+		Kind: ResourceKindSyncTask, Parent: teamConnector, Operation: OperationRun,
+		Entry: &teamConnector, EntryOp: OperationRun,
+	})
+	if err != nil {
+		t.Fatalf("QueryScope(runnable sync tasks) error = %v", err)
+	}
+	var runnableIDs []string
+	if err := teamRunScope.Apply(db.WithContext(memberCtx).Model(&entity.SyncLogs{})).Pluck("sync_logs.id", &runnableIDs).Error; err != nil {
+		t.Fatalf("query runnable sync tasks: %v", err)
+	}
+	if len(runnableIDs) != 1 || runnableIDs[0] != "linked-task" {
+		t.Fatalf("QueryScope(runnable sync tasks) IDs = %v, want linked-task", runnableIDs)
+	}
+
+	personalConnector := ResourceRef{Kind: ResourceKindConnector, ID: "personal-connector"}
+	personalTaskScope, err := checker.QueryScope(personalCtx, ScopeQuery{
+		Kind: ResourceKindSyncTask, Parent: personalConnector, Operation: OperationRead,
+		Entry: &personalConnector, EntryOp: OperationRead,
+	})
+	if err != nil {
+		t.Fatalf("QueryScope(personal sync tasks) error = %v", err)
+	}
+	var personalTaskIDs []string
+	if err := personalTaskScope.Apply(db.WithContext(personalCtx).Model(&entity.SyncLogs{})).Pluck("sync_logs.id", &personalTaskIDs).Error; err != nil {
+		t.Fatalf("query personal sync tasks: %v", err)
+	}
+	if len(personalTaskIDs) != 1 || personalTaskIDs[0] != "personal-task" {
+		t.Fatalf("QueryScope(personal sync tasks) IDs = %v, want personal-task", personalTaskIDs)
+	}
+	allTaskQueryScope, err := checker.QueryScope(personalCtx, ScopeQuery{Kind: ResourceKindSyncTask, Operation: OperationRead})
+	if err != nil {
+		t.Fatalf("QueryScope(all owned sync tasks) error = %v", err)
+	}
+	var ownedTaskIDs []string
+	if err := allTaskQueryScope.Apply(db.WithContext(personalCtx).Model(&entity.SyncLogs{})).Pluck("sync_logs.id", &ownedTaskIDs).Error; err != nil {
+		t.Fatalf("query owned sync tasks: %v", err)
+	}
+	if len(ownedTaskIDs) != 1 || ownedTaskIDs[0] != "personal-task" {
+		t.Fatalf("QueryScope(all owned sync tasks) IDs = %v, want personal-task", ownedTaskIDs)
 	}
 }
 
@@ -1252,18 +1465,18 @@ func TestDatabaseCheckerAuthorizesTenantModelsAndSeparatesInstanceUseFromRead(t 
 			if operation == "" {
 				operation = OperationRead
 			}
-			scope, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{
+			scope, err := checker.scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{
 				Kind: query.kind, Parent: query.parent, Operation: operation,
 			})
 			if err != nil {
 				t.Fatalf("Scope(%s) error = %v", query.name, err)
 			}
-			if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != query.want {
+			if scope.Mode != scopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != query.want {
 				t.Fatalf("Scope(%s) = %+v, want only %q", query.name, scope, query.want)
 			}
 		})
 	}
-	if _, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{
+	if _, err := checker.scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{
 		Kind:      ResourceKindModelInstance,
 		Parent:    ResourceRef{Kind: ResourceKindModel, ID: "team-model"},
 		Operation: OperationRead,
@@ -1301,8 +1514,8 @@ func TestDatabaseCheckerAuthorizesMCPServersAndSkillSpaces(t *testing.T) {
 	}
 
 	servers := []entity.MCPServer{
-		{ID: "team-mcp", TenantID: "team-tenant", Name: "Team MCP", URL: "https://mcp.example", ServerType: "streamable-http", Headers: entity.JSONMap{"Authorization": "secret"}},
-		{ID: "other-mcp", TenantID: "other-tenant", Name: "Other MCP", URL: "https://other.example", ServerType: "streamable-http"},
+		{ID: "team-mcp", UserID: "team-owner", TenantID: "team-tenant", Name: "Team MCP", URL: "https://mcp.example", ServerType: "streamable-http", Headers: entity.JSONMap{"Authorization": "secret"}},
+		{ID: "other-mcp", UserID: "other-owner", TenantID: "other-tenant", Name: "Other MCP", URL: "https://other.example", ServerType: "streamable-http"},
 	}
 	for i := range servers {
 		if err := db.Create(&servers[i]).Error; err != nil {
@@ -1311,11 +1524,11 @@ func TestDatabaseCheckerAuthorizesMCPServersAndSkillSpaces(t *testing.T) {
 	}
 
 	folders := []entity.File{
-		{ID: "active-folder", ParentID: "root", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "active", Type: "folder", SourceType: "skill_space"},
-		{ID: "deleting-folder", ParentID: "root", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "deleting", Type: "folder", SourceType: "skill_space"},
-		{ID: "deleted-folder", ParentID: "root", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "deleted", Type: "folder", SourceType: "skill_space"},
-		{ID: "wrong-type-file", ParentID: "root", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "not-a-folder", Type: "file", SourceType: "skill_space"},
-		{ID: "other-tenant-folder", ParentID: "root", TenantID: "other-tenant", CreatedBy: "other-owner", Name: "other", Type: "folder", SourceType: "skill_space"},
+		{UserID: "team-owner", ID: "active-folder", ParentID: "root", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "active", Type: "folder", SourceType: "skill_space"},
+		{UserID: "team-owner", ID: "deleting-folder", ParentID: "root", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "deleting", Type: "folder", SourceType: "skill_space"},
+		{UserID: "team-owner", ID: "deleted-folder", ParentID: "root", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "deleted", Type: "folder", SourceType: "skill_space"},
+		{UserID: "team-owner", ID: "wrong-type-file", ParentID: "root", TenantID: "team-tenant", CreatedBy: "team-owner", Name: "not-a-folder", Type: "file", SourceType: "skill_space"},
+		{UserID: "other-owner", ID: "other-tenant-folder", ParentID: "root", TenantID: "other-tenant", CreatedBy: "other-owner", Name: "other", Type: "folder", SourceType: "skill_space"},
 	}
 	for i := range folders {
 		if err := db.Create(&folders[i]).Error; err != nil {
@@ -1323,12 +1536,12 @@ func TestDatabaseCheckerAuthorizesMCPServersAndSkillSpaces(t *testing.T) {
 		}
 	}
 	spaces := []entity.SkillSpace{
-		{ID: "active-space", TenantID: "team-tenant", Name: "Active", FolderID: "active-folder", Status: entity.SpaceStatusActive},
-		{ID: "deleting-space", TenantID: "team-tenant", Name: "Deleting", FolderID: "deleting-folder", Status: entity.SpaceStatusDeleting},
-		{ID: "deleted-space", TenantID: "team-tenant", Name: "Deleted", FolderID: "deleted-folder", Status: entity.SpaceStatusDeleted},
-		{ID: "wrong-folder-type-space", TenantID: "team-tenant", Name: "Wrong type", FolderID: "wrong-type-file", Status: entity.SpaceStatusActive},
-		{ID: "cross-tenant-folder-space", TenantID: "team-tenant", Name: "Cross tenant", FolderID: "other-tenant-folder", Status: entity.SpaceStatusActive},
-		{ID: "missing-folder-space", TenantID: "team-tenant", Name: "Missing folder", FolderID: "missing-folder", Status: entity.SpaceStatusActive},
+		{ID: "active-space", UserID: "team-owner", TenantID: "team-tenant", Name: "Active", FolderID: "active-folder", Status: entity.SpaceStatusActive},
+		{ID: "deleting-space", UserID: "team-owner", TenantID: "team-tenant", Name: "Deleting", FolderID: "deleting-folder", Status: entity.SpaceStatusDeleting},
+		{ID: "deleted-space", UserID: "team-owner", TenantID: "team-tenant", Name: "Deleted", FolderID: "deleted-folder", Status: entity.SpaceStatusDeleted},
+		{ID: "wrong-folder-type-space", UserID: "team-owner", TenantID: "team-tenant", Name: "Wrong type", FolderID: "wrong-type-file", Status: entity.SpaceStatusActive},
+		{ID: "cross-tenant-folder-space", UserID: "team-owner", TenantID: "team-tenant", Name: "Cross tenant", FolderID: "other-tenant-folder", Status: entity.SpaceStatusActive},
+		{ID: "missing-folder-space", UserID: "team-owner", TenantID: "team-tenant", Name: "Missing folder", FolderID: "missing-folder", Status: entity.SpaceStatusActive},
 	}
 	for i := range spaces {
 		if err := db.Create(&spaces[i]).Error; err != nil {
@@ -1397,7 +1610,7 @@ func TestDatabaseCheckerAuthorizesMCPServersAndSkillSpaces(t *testing.T) {
 
 	for _, kind := range []ResourceKind{ResourceKindMCPServer, ResourceKindSkillSpace} {
 		t.Run("scope "+string(kind), func(t *testing.T) {
-			scope, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: kind, Operation: OperationRead})
+			scope, err := checker.scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{Kind: kind, Operation: OperationRead})
 			if err != nil {
 				t.Fatalf("Scope(%s) error = %v", kind, err)
 			}
@@ -1406,16 +1619,16 @@ func TestDatabaseCheckerAuthorizesMCPServersAndSkillSpaces(t *testing.T) {
 				want = []string{"active-space"}
 			}
 			if len(want) == 0 {
-				if scope.Mode != ScopeNone || len(scope.ResourceIDs) != 0 {
+				if scope.Mode != scopeNone || len(scope.ResourceIDs) != 0 {
 					t.Fatalf("Scope(%s) = %+v, want no visible resources", kind, scope)
 				}
 				return
 			}
-			if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != len(want) || scope.ResourceIDs[0] != want[0] {
+			if scope.Mode != scopeIDs || len(scope.ResourceIDs) != len(want) || scope.ResourceIDs[0] != want[0] {
 				t.Fatalf("Scope(%s) = %+v, want IDs %v", kind, scope, want)
 			}
 		})
-		if _, err := checker.Scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{
+		if _, err := checker.scope(WithIdentity(context.Background(), member.UserID, member.TenantID), ScopeQuery{
 			Kind: kind, Parent: ResourceRef{Kind: ResourceKindCanvas, ID: "unexpected-parent"}, Operation: OperationRead,
 		}); !errors.Is(err, ErrInvalidPermission) {
 			t.Errorf("Scope(%s with parent) error = %v, want invalid permission", kind, err)

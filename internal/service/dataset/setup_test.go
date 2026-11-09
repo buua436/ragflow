@@ -2,6 +2,7 @@ package dataset
 
 import (
 	"context"
+	"errors"
 	"net/url"
 	"testing"
 
@@ -74,6 +75,7 @@ func ensureDatasetTestMembership(t *testing.T, userID, tenantID, role string) {
 	if err := dao.DB.Where("id = ?", userID).FirstOrCreate(&user).Error; err != nil {
 		t.Fatalf("ensure test user: %v", err)
 	}
+	isOwner := role == "owner"
 	role = datasetTestMembershipRole(t, tenantID, role)
 	var count int64
 	if err := dao.DB.Model(&entity.UserTenant{}).
@@ -93,7 +95,18 @@ func ensureDatasetTestMembership(t *testing.T, userID, tenantID, role string) {
 			t.Fatalf("insert test tenant membership: %v", err)
 		}
 	}
-	if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, tenantID, userID); err != nil {
+	ownerUserID := userID
+	if !isOwner {
+		ownerUserID = tenantID
+		var owner entity.UserTenant
+		err := dao.DB.Where("tenant_id = ? AND role = ? AND status = ?", tenantID, "owner", string(entity.StatusValid)).Take(&owner).Error
+		if err == nil {
+			ownerUserID = owner.UserID
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			t.Fatalf("load test tenant owner: %v", err)
+		}
+	}
+	if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, tenantID, ownerUserID, userID); err != nil {
 		t.Fatalf("prepare test tenant permission fixture: %v", err)
 	}
 }

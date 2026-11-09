@@ -128,9 +128,6 @@ func (dao *KnowledgebaseDAO) EmbeddingBaseName(ctx context.Context, db *gorm.DB,
 
 // Create creates a new knowledge base record
 func (dao *KnowledgebaseDAO) Create(ctx context.Context, db *gorm.DB, kb *entity.Knowledgebase) error {
-	if kb.UserID == "" {
-		kb.UserID = kb.CreatedBy
-	}
 	return db.WithContext(ctx).Create(kb).Error
 }
 
@@ -246,20 +243,10 @@ func (dao *KnowledgebaseDAO) Count(ctx context.Context, db *gorm.DB, filters map
 	return count, err
 }
 
-// ListByResourceIDs retrieves knowledge bases within a permission-filtered ID scope.
-func (dao *KnowledgebaseDAO) ListByResourceIDs(ctx context.Context, db *gorm.DB, resourceIDs, ownerIDs []string, pageNumber, itemsPerPage int, terms []OrderTerm, keywords, parserID, name string) ([]*entity.KnowledgebaseListItem, int64, error) {
-	if len(resourceIDs) == 0 {
-		return []*entity.KnowledgebaseListItem{}, 0, nil
-	}
-	query := db.WithContext(ctx).Model(&entity.Knowledgebase{}).
-		Where("knowledgebase.id IN ?", resourceIDs)
-	return dao.ListByQuery(ctx, query, ownerIDs, pageNumber, itemsPerPage, terms, keywords, parserID, name)
-}
-
 // ListByQuery lists knowledge bases using an already-scoped base query. The
 // caller can apply a permission.QueryScope before calling this method, keeping
 // authorization filtering in the same SQL query as count and pagination.
-func (dao *KnowledgebaseDAO) ListByQuery(ctx context.Context, query *gorm.DB, ownerIDs []string, pageNumber, itemsPerPage int, terms []OrderTerm, keywords, parserID, name string) ([]*entity.KnowledgebaseListItem, int64, error) {
+func (dao *KnowledgebaseDAO) ListByQuery(ctx context.Context, query *gorm.DB, pageNumber, itemsPerPage int, terms []OrderTerm, keywords, parserID, name string) ([]*entity.KnowledgebaseListItem, int64, error) {
 	if query == nil {
 		return nil, 0, errors.New("dataset list query is nil")
 	}
@@ -275,12 +262,8 @@ func (dao *KnowledgebaseDAO) ListByQuery(ctx context.Context, query *gorm.DB, ow
 		knowledgebase.pagerank, knowledgebase.embd_id,
 		knowledgebase.tenant_embd_id, knowledgebase.pipeline_id, knowledgebase.pipeline_version_id,
 		user.nickname, user.avatar as tenant_avatar, knowledgebase.update_time`).
-		Joins("LEFT JOIN user ON knowledgebase.tenant_id = user.id").
+		Joins("LEFT JOIN user ON knowledgebase.user_id = user.id").
 		Where("knowledgebase.status = ?", string(entity.StatusValid))
-
-	if len(ownerIDs) > 0 {
-		query = query.Where("knowledgebase.tenant_id IN ?", ownerIDs)
-	}
 
 	if name != "" {
 		query = query.Where("knowledgebase.name = ?", name)
@@ -319,18 +302,14 @@ func (dao *KnowledgebaseDAO) ListByQuery(ctx context.Context, query *gorm.DB, ow
 	return kbs, total, nil
 }
 
-// GetOwnerFilterByResourceIDs groups permission-filtered datasets by owner tenant.
-func (dao *KnowledgebaseDAO) GetOwnerFilterByResourceIDs(ctx context.Context, db *gorm.DB, resourceIDs []string) ([]*entity.DatasetOwnerFilter, error) {
+// GetOwnerFilter groups datasets from an already-scoped query by resource owner.
+func (dao *KnowledgebaseDAO) GetOwnerFilter(ctx context.Context, query *gorm.DB) ([]*entity.DatasetOwnerFilter, error) {
 	owners := make([]*entity.DatasetOwnerFilter, 0)
-	if len(resourceIDs) == 0 {
-		return owners, nil
-	}
-
-	err := db.WithContext(ctx).Model(&entity.Knowledgebase{}).
-		Select("knowledgebase.tenant_id as id, user.nickname as label, COUNT(knowledgebase.id) as count").
-		Joins("LEFT JOIN user ON knowledgebase.tenant_id = user.id").
-		Where("knowledgebase.id IN ? AND knowledgebase.status = ?", resourceIDs, string(entity.StatusValid)).
-		Group("knowledgebase.tenant_id, user.nickname").
+	err := query.WithContext(ctx).
+		Select("knowledgebase.user_id as id, user.nickname as label, COUNT(knowledgebase.id) as count").
+		Joins("LEFT JOIN user ON knowledgebase.user_id = user.id").
+		Where("knowledgebase.status = ?", string(entity.StatusValid)).
+		Group("knowledgebase.user_id, user.nickname").
 		Scan(&owners).Error
 
 	return owners, err

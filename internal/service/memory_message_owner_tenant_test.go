@@ -8,26 +8,30 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/engine"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 )
 
 func TestUpdateMemoryTeamMemberResolvesModelsAgainstOwnerTenant(t *testing.T) {
 	setupMemoryMessageTestDB(t)
 
 	status := "1"
-	if err := dao.DB.Create(&entity.Memory{
-		ID: "mem-model", Name: "Shared model memory", TenantID: "owner-1", MemoryType: dao.MemoryTypeRaw,
+	if err := dao.DB.Create(&entity.Memory{UserID: "owner-user",
+		ID: "mem-model", Name: "Shared model memory", TenantID: "memory-tenant", MemoryType: dao.MemoryTypeRaw,
 		StorageType: "table", EmbdID: "old-embd", LLMID: "old-llm",
 		Permissions: string(entity.TenantPermissionTeam), MemorySize: MemorySizeLimit,
 	}).Error; err != nil {
 		t.Fatalf("seed memory: %v", err)
 	}
-	if err := dao.DB.Create(&entity.UserTenant{
-		ID: "ut-model", UserID: "member-1", TenantID: "owner-1", Role: "normal", InvitedBy: "owner-1", Status: &status,
-	}).Error; err != nil {
-		t.Fatalf("seed user tenant: %v", err)
+	for _, membership := range []entity.UserTenant{
+		{ID: "ut-owner", UserID: "owner-user", TenantID: "memory-tenant", Role: string(permission.RoleOwner), Status: &status},
+		{ID: "ut-member", UserID: "member-1", TenantID: "memory-tenant", Role: string(permission.RoleNormal), InvitedBy: "owner-user", Status: &status},
+	} {
+		if err := dao.DB.Create(&membership).Error; err != nil {
+			t.Fatalf("seed user tenant: %v", err)
+		}
 	}
-	ctx := serviceTestContext(t, "member-1", "owner-1", "owner-1")
-	grantServiceTestResource(t, "owner-1", "memory", "mem-model", "member-1", testResourcePermissionRead|testResourcePermissionWrite)
+	ctx := serviceTestContext(t, "member-1", "memory-tenant", "owner-user")
+	grantServiceTestResource(t, "memory-tenant", "memory", "mem-model", "member-1", testResourcePermissionRead|testResourcePermissionWrite)
 
 	for _, row := range []struct {
 		providerID string
@@ -35,7 +39,7 @@ func TestUpdateMemoryTeamMemberResolvesModelsAgainstOwnerTenant(t *testing.T) {
 		tenantID   string
 		modelID    string
 	}{
-		{providerID: "provider-owner", userID: "owner-1", tenantID: "owner-1", modelID: "tenant-llm-owner"},
+		{providerID: "provider-owner", userID: "owner-user", tenantID: "memory-tenant", modelID: "tenant-llm-owner"},
 		{providerID: "provider-member", userID: "member-1", tenantID: "member-1", modelID: "tenant-llm-member"},
 	} {
 		if err := dao.DB.Create(&entity.TenantModelProvider{ID: row.providerID, UserID: row.userID, ProviderName: "OpenAI", TenantID: row.tenantID}).Error; err != nil {

@@ -18,6 +18,7 @@ package dao
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"ragflow/internal/common"
 	"ragflow/internal/entity"
@@ -208,12 +209,18 @@ func (dao *FileDAO) GetSubtreeIDs(ctx context.Context, db *gorm.DB, tenantID, pf
 	return ids, nil
 }
 
-// GetRootFolder gets or creates root folder for tenant
-func (dao *FileDAO) GetRootFolder(ctx context.Context, db *gorm.DB, tenantID string) (*entity.File, error) {
+// GetRootFolder gets or creates the root folder for a tenant.
+func (dao *FileDAO) GetRootFolder(ctx context.Context, db *gorm.DB, tenantID, ownerUserID, createdByUserID string) (*entity.File, error) {
 	var file entity.File
 	err := db.WithContext(ctx).Where("tenant_id = ? AND parent_id = id", tenantID).First(&file).Error
 	if err == nil {
 		return &file, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	if ownerUserID == "" || createdByUserID == "" {
+		return nil, fmt.Errorf("root folder owner and creator user ids are required")
 	}
 
 	// Create root folder if not exists
@@ -221,9 +228,9 @@ func (dao *FileDAO) GetRootFolder(ctx context.Context, db *gorm.DB, tenantID str
 	file = entity.File{
 		ID:        fileID,
 		ParentID:  fileID,
-		UserID:    tenantID,
+		UserID:    ownerUserID,
 		TenantID:  tenantID,
-		CreatedBy: tenantID,
+		CreatedBy: createdByUserID,
 		Name:      "/",
 		Type:      "folder",
 		Size:      0,
@@ -324,9 +331,6 @@ func (dao *FileDAO) GetAllParentFolders(ctx context.Context, db *gorm.DB, startI
 
 // Create creates a new file
 func (dao *FileDAO) Create(ctx context.Context, db *gorm.DB, file *entity.File) error {
-	if file.UserID == "" {
-		file.UserID = file.CreatedBy
-	}
 	return db.WithContext(ctx).Create(file).Error
 }
 
@@ -426,9 +430,6 @@ func (dao *FileDAO) CreateFolder(ctx context.Context, db *gorm.DB, parentID, ten
 
 // Insert inserts a new file record
 func (dao *FileDAO) Insert(ctx context.Context, db *gorm.DB, file *entity.File) error {
-	if file.UserID == "" {
-		file.UserID = file.CreatedBy
-	}
 	return db.WithContext(ctx).Create(file).Error
 }
 
@@ -560,13 +561,17 @@ func (dao *FileDAO) InitDatasetDocs(ctx context.Context, db *gorm.DB, rootID, te
 		return nil
 	}
 
-	datasetFolder, err := dao.newAFileFromDataset(ctx, db, tenantID, DatasetFolderName, rootID)
+	root, err := dao.GetByID(ctx, db, rootID)
+	if err != nil {
+		return err
+	}
+	datasetFolder, err := dao.newAFileFromDataset(ctx, db, tenantID, root.UserID, root.CreatedBy, DatasetFolderName, rootID)
 	if err != nil {
 		return err
 	}
 
 	var datasets []entity.Knowledgebase
-	err = db.WithContext(ctx).Select("id", "name").
+	err = db.WithContext(ctx).Select("id", "name", "user_id", "created_by").
 		Where("tenant_id = ?", tenantID).
 		Find(&datasets).Error
 	if err != nil {
@@ -575,7 +580,7 @@ func (dao *FileDAO) InitDatasetDocs(ctx context.Context, db *gorm.DB, rootID, te
 
 	for _, ds := range datasets {
 		var datasetFolderForDataset *entity.File
-		datasetFolderForDataset, err = dao.newAFileFromDataset(ctx, db, tenantID, ds.Name, datasetFolder.ID)
+		datasetFolderForDataset, err = dao.newAFileFromDataset(ctx, db, tenantID, ds.UserID, ds.CreatedBy, ds.Name, datasetFolder.ID)
 		if err != nil {
 			continue
 		}
@@ -598,7 +603,7 @@ func (dao *FileDAO) InitDatasetDocs(ctx context.Context, db *gorm.DB, rootID, te
 
 // newAFileFromDataset creates a new file from knowledgebase, or returns the existing one.
 // Deduplicates duplicate entries that may have been created by race conditions.
-func (dao *FileDAO) newAFileFromDataset(ctx context.Context, db *gorm.DB, tenantID, name, parentID string) (*entity.File, error) {
+func (dao *FileDAO) newAFileFromDataset(ctx context.Context, db *gorm.DB, tenantID, ownerUserID, createdBy, name, parentID string) (*entity.File, error) {
 	var existingFiles []*entity.File
 	err := db.WithContext(ctx).Where("tenant_id = ? AND parent_id = ? AND name = ?", tenantID, parentID, name).Order("create_time ASC").Find(&existingFiles).Error
 	if err != nil {
@@ -623,9 +628,9 @@ func (dao *FileDAO) newAFileFromDataset(ctx context.Context, db *gorm.DB, tenant
 	file := &entity.File{
 		ID:         fileID,
 		ParentID:   parentID,
-		UserID:     tenantID,
+		UserID:     ownerUserID,
 		TenantID:   tenantID,
-		CreatedBy:  tenantID,
+		CreatedBy:  createdBy,
 		Name:       name,
 		Type:       "folder",
 		Size:       0,
@@ -666,9 +671,9 @@ func (dao *FileDAO) addFileFromKB(ctx context.Context, db *gorm.DB, doc *entity.
 	file := &entity.File{
 		ID:         fileID,
 		ParentID:   datasetFolderID,
-		UserID:     tenantID,
+		UserID:     doc.UserID,
 		TenantID:   tenantID,
-		CreatedBy:  tenantID,
+		CreatedBy:  doc.CreatedBy,
 		Name:       docName,
 		Type:       doc.Type,
 		Size:       doc.Size,

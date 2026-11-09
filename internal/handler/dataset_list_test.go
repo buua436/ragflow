@@ -60,7 +60,7 @@ func insertListDatasetsTestKB(t *testing.T, id, tenantID, name string) {
 	}).Error; err != nil {
 		t.Fatalf("insert tenant owner: %v", err)
 	}
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: tenantID,
 		ID:           id,
 		TenantID:     tenantID,
 		Name:         name,

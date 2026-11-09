@@ -54,10 +54,10 @@ func TestListMCPServersCountsAndPaginatesAfterSQLAuthorization(t *testing.T) {
 		t.Fatalf("migrate MCP server: %v", err)
 	}
 	for _, server := range []*entity.MCPServer{
-		{ID: "mcp-a", TenantID: "tenant-1", Name: "alpha", URL: "https://example.test/a", ServerType: "sse"},
-		{ID: "mcp-b", TenantID: "tenant-1", Name: "bravo", URL: "https://example.test/b", ServerType: "sse"},
-		{ID: "mcp-c", TenantID: "tenant-1", Name: "charlie", URL: "https://example.test/c", ServerType: "sse"},
-		{ID: "other-tenant", TenantID: "tenant-2", Name: "delta", URL: "https://example.test/d", ServerType: "sse"},
+		{UserID: "tenant-1", ID: "mcp-a", TenantID: "tenant-1", Name: "alpha", URL: "https://example.test/a", ServerType: "sse"},
+		{UserID: "tenant-1", ID: "mcp-b", TenantID: "tenant-1", Name: "bravo", URL: "https://example.test/b", ServerType: "sse"},
+		{UserID: "tenant-1", ID: "mcp-c", TenantID: "tenant-1", Name: "charlie", URL: "https://example.test/c", ServerType: "sse"},
+		{UserID: "tenant-2", ID: "other-tenant", TenantID: "tenant-2", Name: "delta", URL: "https://example.test/d", ServerType: "sse"},
 	} {
 		if err := db.Create(server).Error; err != nil {
 			t.Fatalf("create MCP server %q: %v", server.ID, err)

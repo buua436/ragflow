@@ -276,9 +276,10 @@ func TestListVersions_Success(t *testing.T) {
 
 	// Insert canvas
 	testDB.Create(&entity.UserCanvas{
-		ID:     "canvas-1",
-		UserID: "user-1",
-		Title:  sptr("Test Agent"),
+		ID:       "canvas-1",
+		UserID:   "user-1",
+		Title:    sptr("Test Agent"),
+		TenantID: sptr("user-1"),
 	})
 
 	// Insert 3 versions with staggered timestamps
@@ -352,7 +353,7 @@ func TestListVersions_Empty(t *testing.T) {
 	testDB.Create(&entity.UserCanvas{
 		ID:     "canvas-empty",
 		UserID: "user-1",
-		Title:  sptr("Empty Agent"),
+		Title:  sptr("Empty Agent"), TenantID: sptr("user-1"),
 	})
 
 	ctx := serviceTestContext(t, "user-1", "user-1")
@@ -458,7 +459,7 @@ func TestGetVersion_Success(t *testing.T) {
 	testDB.Create(&entity.UserCanvas{
 		ID:     "canvas-1",
 		UserID: "user-1",
-		Title:  sptr("Test Agent"),
+		Title:  sptr("Test Agent"), TenantID: sptr("user-1"),
 	})
 
 	testDB.Create(&entity.UserCanvasVersion{
@@ -567,13 +568,15 @@ func TestRunAgent_VersionBelongsToOtherCanvas(t *testing.T) {
 	testDB.Create(&entity.UserCanvas{
 		ID:     "canvas-1",
 		UserID: "user-1",
-		Title:  sptr("Canvas 1"),
+		Title:  sptr("Canvas 1"), TenantID: sptr("user-1"),
 	})
 	testDB.Create(&entity.UserCanvas{
-		ID:     "canvas-2",
-		UserID: "user-1",
-		Title:  sptr("Canvas 2"),
+		ID:       "canvas-2",
+		UserID:   "user-1",
+		Title:    sptr("Canvas 2"),
+		TenantID: sptr("user-1"),
 	})
+
 	// Version row that belongs to canvas-2, NOT canvas-1.
 	testDB.Create(&entity.UserCanvasVersion{
 		ID:           "v-on-canvas-2",
@@ -625,7 +628,7 @@ func TestRunAgent_VersionNotFound(t *testing.T) {
 	testDB.Create(&entity.UserCanvas{
 		ID:     "canvas-1",
 		UserID: "user-1",
-		Title:  sptr("Canvas 1"),
+		Title:  sptr("Canvas 1"), TenantID: sptr("user-1"),
 	})
 
 	ctx := serviceTestContext(t, "user-1", "user-1")
@@ -682,7 +685,7 @@ func TestRunAgent_NoVersionPublishedPlaceholder(t *testing.T) {
 	testDB.Create(&entity.UserCanvas{
 		ID:     "canvas-empty",
 		UserID: "user-1",
-		Title:  sptr("Canvas With No Version"),
+		Title:  sptr("Canvas With No Version"), TenantID: sptr("user-1"),
 	})
 
 	ctx := serviceTestContext(t, "user-1", "user-1")
@@ -815,9 +818,10 @@ func TestRunAgent_StorageErrorFromCanvasAccess(t *testing.T) {
 
 	testDB.Create(&entity.User{ID: "user-1", Nickname: "owner", Email: "owner@test.com"})
 	testDB.Create(&entity.UserCanvas{
-		ID:     "canvas-1",
-		UserID: "user-1",
-		Title:  sptr("Test Canvas"),
+		ID:       "canvas-1",
+		UserID:   "user-1",
+		Title:    sptr("Test Canvas"),
+		TenantID: sptr("user-1"),
 	})
 
 	// Close the underlying sql.DB to make the next DAO query fail
@@ -935,7 +939,7 @@ func createAgentSessionTestCanvas(t *testing.T, id, userID string) {
 		ID:             id,
 		UserID:         userID,
 		Title:          sptr("Test Agent"),
-		CanvasCategory: "agent_canvas",
+		CanvasCategory: "agent_canvas", TenantID: sptr(userID),
 	}).Error; err != nil {
 		t.Fatalf("failed to create canvas %s: %v", id, err)
 	}
@@ -1756,7 +1760,7 @@ func TestResetAgentServiceClearsPerRunState(t *testing.T) {
 		Title:          sptr("Test Agent"),
 		CanvasCategory: "agent_canvas",
 		Release:        true, // pre-reset draft has a published version
-		DSL:            initialDSL,
+		DSL:            initialDSL, TenantID: sptr("user-1"),
 	}
 	if err := dao.DB.WithContext(ctx).Create(row).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
@@ -1858,7 +1862,7 @@ func TestUpdateAgentSettingsPreservesDSL(t *testing.T) {
 		Title:          sptr("Settings Agent"),
 		Description:    sptr("old description"),
 		CanvasCategory: "agent_canvas",
-		DSL:            originalDSL,
+		DSL:            originalDSL, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -1895,7 +1899,7 @@ func TestUpdateAgentAllowsExistingTitleForSameCanvas(t *testing.T) {
 		Title:          sptr("Same Title"),
 		Description:    sptr("old description"),
 		CanvasCategory: "agent_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -1918,6 +1922,7 @@ func TestUpdateAgentTeamMemberCanUpdateButCannotChangePermission(t *testing.T) {
 		{
 			ID:             "canvas-team-edit",
 			UserID:         "owner-1",
+			TenantID:       sptr("owner-1"),
 			Title:          sptr("Editable Title"),
 			Permission:     string(entity.TenantPermissionTeam),
 			CanvasCategory: "agent_canvas",
@@ -1926,6 +1931,7 @@ func TestUpdateAgentTeamMemberCanUpdateButCannotChangePermission(t *testing.T) {
 		{
 			ID:             "canvas-owner-duplicate",
 			UserID:         "owner-1",
+			TenantID:       sptr("owner-1"),
 			Title:          sptr("Owner Duplicate"),
 			Permission:     string(entity.TenantPermissionMe),
 			CanvasCategory: "agent_canvas",
@@ -1992,7 +1998,7 @@ func TestUpdateAgentRejectsDuplicateTitleInDestinationCategory(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("Source Title"),
 		CanvasCategory: "agent_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed source agent: %v", err)
 	}
@@ -2001,7 +2007,7 @@ func TestUpdateAgentRejectsDuplicateTitleInDestinationCategory(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("Duplicate Title"),
 		CanvasCategory: "dataflow_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed duplicate agent: %v", err)
 	}
@@ -2023,7 +2029,7 @@ func TestUpdateAgentRejectsCategoryOnlyDuplicateTitleInDestinationCategory(t *te
 		UserID:         "user-1",
 		Title:          sptr("Shared Title"),
 		CanvasCategory: "agent_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed source agent: %v", err)
 	}
@@ -2032,7 +2038,7 @@ func TestUpdateAgentRejectsCategoryOnlyDuplicateTitleInDestinationCategory(t *te
 		UserID:         "user-1",
 		Title:          sptr("Shared Title"),
 		CanvasCategory: "dataflow_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed duplicate agent: %v", err)
 	}
@@ -2055,7 +2061,7 @@ func TestUpdateAgentAllowsCaseOnlyTitleChange(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("Case Title"),
 		CanvasCategory: "agent_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -2084,7 +2090,7 @@ func TestCreateAgentDedupesDuplicateTitle(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("Dup Title"),
 		CanvasCategory: "agent_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -2166,7 +2172,7 @@ func TestUpdateAgentRejectsOverlongTitle(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("Short Title"),
 		CanvasCategory: "agent_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -2188,7 +2194,7 @@ func TestUpdateAgentRejectsOverlongAlias(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("Short Title"),
 		CanvasCategory: "agent_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -2227,7 +2233,7 @@ func TestUpdateAgentPersistsDSLAsJSONMap(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("DSL Agent"),
 		CanvasCategory: "agent_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -2273,7 +2279,7 @@ func TestUpdateAgentDSLCreatesAndReplacesDraftVersion(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("Draft Agent"),
 		CanvasCategory: "agent_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -2346,7 +2352,7 @@ func TestUpdateAgentReleaseTrueMarksCanvasAndVersionReleased(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("Release Agent"),
 		CanvasCategory: "agent_canvas",
-		DSL:            entity.JSONMap{},
+		DSL:            entity.JSONMap{}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -2411,7 +2417,7 @@ func TestUpdateAgentWithoutReleaseKeepsCanvasUnreleased(t *testing.T) {
 		Title:          sptr("Draft Agent"),
 		CanvasCategory: "agent_canvas",
 		DSL:            entity.JSONMap{},
-		Release:        true,
+		Release:        true, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -2509,9 +2515,9 @@ func TestListAgents_MultiCategoryFilter(t *testing.T) {
 		t.Fatalf("failed to seed user: %v", err)
 	}
 	canvases := []entity.UserCanvas{
-		{ID: "canvas-wf-1", UserID: "user-1", Title: sptr("Workflow One"), CanvasCategory: "agent_canvas"},
-		{ID: "canvas-wf-2", UserID: "user-1", Title: sptr("Workflow Two"), CanvasCategory: "agent_canvas"},
-		{ID: "canvas-df-1", UserID: "user-1", Title: sptr("Pipeline One"), CanvasCategory: "dataflow_canvas"},
+		{ID: "canvas-wf-1", UserID: "user-1", TenantID: sptr("user-1"), Title: sptr("Workflow One"), CanvasCategory: "agent_canvas"},
+		{ID: "canvas-wf-2", UserID: "user-1", TenantID: sptr("user-1"), Title: sptr("Workflow Two"), CanvasCategory: "agent_canvas"},
+		{ID: "canvas-df-1", UserID: "user-1", TenantID: sptr("user-1"), Title: sptr("Pipeline One"), CanvasCategory: "dataflow_canvas"},
 	}
 	for i := range canvases {
 		if err := dao.DB.Create(&canvases[i]).Error; err != nil {
@@ -2555,7 +2561,7 @@ func TestListAgents_MergesCompilationTemplateGroups(t *testing.T) {
 	if err := dao.DB.Create(&entity.UserCanvas{
 		ID: "canvas-1", UserID: "user-1", Title: sptr("Agent canvas"),
 		CanvasCategory: "agent_canvas",
-		BaseModel:      entity.BaseModel{CreateTime: &canvasUpdate, UpdateTime: &canvasUpdate},
+		BaseModel:      entity.BaseModel{CreateTime: &canvasUpdate, UpdateTime: &canvasUpdate}, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -2700,7 +2706,7 @@ func TestPublishAgentUpdatesCanvasAndReleasedVersion(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("Draft Agent"),
 		CanvasCategory: "agent_canvas",
-		DSL:            initialDSL,
+		DSL:            initialDSL, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -2795,7 +2801,7 @@ func TestUpdateAgentDSLDoesNotOverwriteLatestReleasedVersion(t *testing.T) {
 		UserID:         "user-1",
 		Title:          sptr("Released Agent"),
 		CanvasCategory: "agent_canvas",
-		DSL:            dsl,
+		DSL:            dsl, TenantID: sptr("user-1"),
 	}).Error; err != nil {
 		t.Fatalf("failed to seed agent: %v", err)
 	}
@@ -3005,7 +3011,7 @@ func createTeamSharedAgentTestFixtures(t *testing.T, canvasOwner, teammate, sess
 		UserID:         canvasOwner,
 		Title:          sptr("Shared Agent"),
 		CanvasCategory: "agent_canvas",
-		Permission:     string(entity.TenantPermissionTeam),
+		Permission:     string(entity.TenantPermissionTeam), TenantID: sptr(canvasOwner),
 	}).Error; err != nil {
 		t.Fatalf("failed to create agent: %v", err)
 	}

@@ -77,7 +77,7 @@ func insertArtifactGraphKB(t *testing.T, db *gorm.DB, kbID, ownerID string) {
 	}).Error; err != nil {
 		t.Fatalf("insert tenant owner: %v", err)
 	}
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: ownerID,
 		ID:         kbID,
 		TenantID:   ownerID,
 		Name:       "artifact-graph-kb",

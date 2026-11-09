@@ -330,7 +330,7 @@ func TestCreateDataset_DedupesDuplicateName(t *testing.T) {
 	pushServiceDB(t, db)
 	insertCreateDatasetTenant(t, "tenant-1")
 
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "tenant-1",
 		ID:        "kb-1",
 		TenantID:  "tenant-1",
 		Name:      "Existing",

@@ -362,7 +362,8 @@ func loadHistory(ctx context.Context, db *gorm.DB, table string, conversationIDs
 	if len(conversationIDs) == 0 {
 		return result, nil
 	}
-	query := db.WithContext(ctx).Session(&gorm.Session{QueryFields: true}).Table(table).Where("conversation_id IN ?", conversationIDs).Order("conversation_id, position")
+	query := db.Session(&gorm.Session{NewDB: true, QueryFields: true, Context: ctx}).Table(table).
+		Where("conversation_id IN ?", conversationIDs).Order("conversation_id, position")
 	var omitted []string
 	for column, include := range map[string]bool{
 		"reference": options.IncludeReference, "prompt": options.IncludePrompt,

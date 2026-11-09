@@ -27,6 +27,7 @@ import (
 
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission/testsupport"
 )
 
 func TestDecisionScopeRoundTrip(t *testing.T) {
@@ -93,7 +94,7 @@ func TestJoinDecisionURL(t *testing.T) {
 // The instance's own settings must not be needed for the backend to exist: a
 // missing database is a state the filter has to survive, not crash on.
 func TestDecisionModelIDForWithoutDatabase(t *testing.T) {
-	if got := decisionModelIDFor(context.Background(), decisionScope{tenantID: "t", chatID: "c"}); got != "" {
+	if got := decisionModelIDFor(context.Background(), decisionScope{tenantID: "t", chatID: "c", userID: "user-t"}); got != "" {
 		t.Fatalf("decisionModelIDFor = %q, want empty without a database", got)
 	}
 }
@@ -128,12 +129,22 @@ func setupDecisionConfigDB(t *testing.T) {
 func seedTenantDecisionDefault(t *testing.T, db *gorm.DB, tenantID string, decisionID string, tenantDecisionID *string) {
 	t.Helper()
 	status := entity.TenantMembershipStatusJoined
-	if err := db.Create(&entity.UserTenant{
-		ID: "owner-" + tenantID, UserID: tenantID, TenantID: tenantID, Role: "owner", Status: &status,
-		DecisionID: &decisionID, TenantDecisionID: tenantDecisionID,
-	}).Error; err != nil {
-		t.Fatalf("seed owner model settings: %v", err)
+	for _, membership := range []entity.UserTenant{
+		{ID: "owner-" + tenantID, UserID: "owner-" + tenantID, TenantID: tenantID, Role: "owner", Status: &status, DecisionID: &decisionID, TenantDecisionID: tenantDecisionID},
+		{ID: "member-" + tenantID, UserID: "member-" + tenantID, TenantID: tenantID, Role: "normal", Status: &status},
+	} {
+		if err := db.Create(&membership).Error; err != nil {
+			t.Fatalf("seed tenant decision settings: %v", err)
+		}
 	}
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, tenantID, "owner-"+tenantID, "member-"+tenantID); err != nil {
+		t.Fatalf("prepare decision permission fixture: %v", err)
+	}
+}
+
+func decisionTestContext(tenantID, chatID string) context.Context {
+	userID := "owner-" + tenantID
+	return withDecisionScope(context.Background(), tenantID, chatID, userID)
 }
 
 func seedDecisionModel(t *testing.T, db *gorm.DB, tenantID, modelName string, modelType int) (providerID, instanceID, modelID string) {
@@ -143,7 +154,7 @@ func seedDecisionModel(t *testing.T, db *gorm.DB, tenantID, modelName string, mo
 	instanceID = fmt.Sprintf("inst-%s-%s", tag, modelName)
 	modelID = fmt.Sprintf("model-%s-%s", tag, modelName)
 	rows := []any{
-		&entity.TenantModelProvider{ID: providerID, ProviderName: "SystemOne-" + modelName, TenantID: tenantID},
+		&entity.TenantModelProvider{UserID: "owner-" + tenantID, ID: providerID, ProviderName: "SystemOne-" + modelName, TenantID: tenantID},
 		&entity.TenantModelInstance{ID: instanceID, InstanceName: "qwen", ProviderID: providerID, APIKey: "key-" + modelName, Extra: `{"base_url":"https://host.example/v1"}`},
 		&entity.TenantModel{ID: modelID, ModelName: modelName, ProviderID: providerID, InstanceID: instanceID, ModelType: modelType, Status: "active"},
 	}
@@ -161,11 +172,12 @@ func TestResolveDecisionBackendUsesTenantDefault(t *testing.T) {
 	db := dao.DB
 	_, _, modelID := seedDecisionModel(t, db, "tenant-1", "decision-model-preview", int(entity.ModelTypeDecision))
 	seedTenantDecisionDefault(t, db, "tenant-1", modelID, nil)
-	if err := db.Create(&entity.Chat{ID: "chat-1", TenantID: "tenant-1", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}}).Error; err != nil {
+	chatStatus := string(entity.StatusValid)
+	if err := db.Create(&entity.Chat{UserID: "owner-tenant-1", ID: "chat-1", TenantID: "tenant-1", Status: &chatStatus, LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}}).Error; err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	got := resolveDecisionBackend(withDecisionScope(context.Background(), "tenant-1", "chat-1"))
+	got := resolveDecisionBackend(decisionTestContext("tenant-1", "chat-1"))
 	if got == nil {
 		t.Fatal("no backend resolved for a configured tenant")
 	}
@@ -187,11 +199,12 @@ func TestResolveDecisionBackendPrefersChatOverride(t *testing.T) {
 	_, _, tenantModel := seedDecisionModel(t, db, "tenant-1", "tenant-model", int(entity.ModelTypeDecision))
 	_, _, chatModel := seedDecisionModel(t, db, "tenant-1", "chat-model", int(entity.ModelTypeDecision))
 	seedTenantDecisionDefault(t, db, "tenant-1", tenantModel, nil)
-	if err := db.Create(&entity.Chat{ID: "chat-1", TenantID: "tenant-1", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DecisionID: &chatModel}).Error; err != nil {
+	chatStatus := string(entity.StatusValid)
+	if err := db.Create(&entity.Chat{UserID: "owner-tenant-1", ID: "chat-1", TenantID: "tenant-1", Status: &chatStatus, LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DecisionID: &chatModel}).Error; err != nil {
 		t.Fatalf("seed chat: %v", err)
 	}
 
-	got := resolveDecisionBackend(withDecisionScope(context.Background(), "tenant-1", "chat-1"))
+	got := resolveDecisionBackend(decisionTestContext("tenant-1", "chat-1"))
 	if got == nil || got.model != "chat-model" {
 		t.Fatalf("resolved %+v, want the chat's own model", got)
 	}
@@ -209,7 +222,7 @@ func TestResolveDecisionBackendRejectsWrongModelType(t *testing.T) {
 	defer srv.Close()
 	env := backendFor(t, srv.URL, 0.15)
 
-	if got := resolveDecisionBackend(withDecisionScope(context.Background(), "tenant-1", "")); got != env {
+	if got := resolveDecisionBackend(decisionTestContext("tenant-1", "")); got != env {
 		t.Fatalf("resolved %p, want the env backend (model is not a decision model)", got)
 	}
 }
@@ -225,7 +238,7 @@ func TestResolveDecisionBackendRejectsForeignTenant(t *testing.T) {
 	defer srv.Close()
 	env := backendFor(t, srv.URL, 0.15)
 
-	if got := resolveDecisionBackend(withDecisionScope(context.Background(), "tenant-1", "")); got != env {
+	if got := resolveDecisionBackend(decisionTestContext("tenant-1", "")); got != env {
 		t.Fatalf("resolved %p, want the env backend (model belongs to another tenant)", got)
 	}
 }
@@ -240,7 +253,8 @@ func TestDecisionModelIDPrefersResolvedRowID(t *testing.T) {
 	composite := "resolved@systemone@chat"
 	seedTenantDecisionDefault(t, db, "tenant-1", composite, &modelID)
 
-	got := decisionModelIDFor(context.Background(), decisionScope{tenantID: "tenant-1"})
+	ctx := decisionTestContext("tenant-1", "")
+	got := decisionModelIDFor(ctx, decisionScopeFrom(ctx))
 	if got != modelID {
 		t.Errorf("model id = %q, want the resolved row id %q", got, modelID)
 	}
@@ -253,7 +267,8 @@ func TestDecisionModelIDFallsBackToRequestedValue(t *testing.T) {
 	_, _, modelID := seedDecisionModel(t, db, "tenant-1", "legacy", int(entity.ModelTypeDecision))
 	seedTenantDecisionDefault(t, db, "tenant-1", modelID, nil)
 
-	if got := decisionModelIDFor(context.Background(), decisionScope{tenantID: "tenant-1"}); got != modelID {
+	ctx := decisionTestContext("tenant-1", "")
+	if got := decisionModelIDFor(ctx, decisionScopeFrom(ctx)); got != modelID {
 		t.Errorf("model id = %q, want %q", got, modelID)
 	}
 }
@@ -273,10 +288,10 @@ func TestDecisionBackendCacheIsScopedToTenant(t *testing.T) {
 		seedTenantDecisionDefault(t, db, tenantID, "", &id)
 	}
 
-	if got := resolveDecisionBackend(withDecisionScope(context.Background(), "tenant-a", "")); got == nil {
+	if got := resolveDecisionBackend(decisionTestContext("tenant-a", "")); got == nil {
 		t.Fatal("tenant A owns the model and must resolve it")
 	}
-	if got := resolveDecisionBackend(withDecisionScope(context.Background(), "tenant-b", "")); got != nil {
+	if got := resolveDecisionBackend(decisionTestContext("tenant-b", "")); got != nil {
 		t.Fatalf("tenant B received a cached backend it does not own (key %q)", got.key)
 	}
 }

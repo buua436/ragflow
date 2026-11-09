@@ -32,13 +32,13 @@ func (s *FileService) UploadFile(ctx context.Context, parentID string, files []*
 	}
 	tenantID := permission.TenantIDFromContext(ctx)
 	if tenantID == "" {
-		tenantID = userID
+		return nil, permission.ErrTenantContextMissing
 	}
 	if err := permission.NewDatabaseChecker(dao.DB).CheckFeature(ctx, "file", permission.ActionWrite); err != nil {
 		return nil, err
 	}
 	if parentID == "" {
-		rootFolder, err := s.fileDAO.GetRootFolder(ctx, dao.DB, tenantID)
+		rootFolder, err := GetOrCreateRootFolder(ctx, dao.DB)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get root folder: %w", err)
 		}

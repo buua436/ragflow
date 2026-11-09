@@ -105,7 +105,7 @@ func migrateTenantDefaultModels(ctx context.Context, db *gorm.DB) error {
 				query := fmt.Sprintf(
 					"UPDATE user_tenant SET %s = (SELECT tenant.%s FROM tenant WHERE tenant.id = user_tenant.tenant_id) "+
 						"WHERE (user_tenant.%s IS NULL OR user_tenant.%s = '') "+
-						"AND (user_tenant.role = 'owner' OR user_tenant.user_id = user_tenant.tenant_id) "+
+						"AND user_tenant.role = 'owner' AND user_tenant.status = '1' "+
 						"AND EXISTS (SELECT 1 FROM tenant WHERE tenant.id = user_tenant.tenant_id)",
 					column, column, column, column,
 				)

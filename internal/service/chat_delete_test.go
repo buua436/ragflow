@@ -41,7 +41,7 @@ func createChatDeleteServiceTestChat(t *testing.T, db *gorm.DB, id, tenantID str
 
 	name := "chat-" + id
 	status := string(entity.StatusValid)
-	chat := &entity.Chat{
+	chat := &entity.Chat{UserID: tenantID,
 		ID:           id,
 		TenantID:     tenantID,
 		Name:         &name,

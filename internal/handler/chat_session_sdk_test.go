@@ -39,7 +39,7 @@ func TestListChatSessionsPublicSchemaAndUserFilter(t *testing.T) {
 			if err := db.AutoMigrate(&entity.Chat{}, &entity.ChatSession{}, &entity.ConversationMessage{}); err != nil {
 				t.Fatal(err)
 			}
-			if err := db.Create(&entity.Chat{ID: "chat", TenantID: "user-1", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, Status: sptr("1")}).Error; err != nil {
+			if err := db.Create(&entity.Chat{UserID: "user-1", ID: "chat", TenantID: "user-1", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, Status: sptr("1")}).Error; err != nil {
 				t.Fatal(err)
 			}
 			for _, id := range []string{"session-a", "session-b"} {

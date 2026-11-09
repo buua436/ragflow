@@ -261,10 +261,7 @@ func (h *SearchBotHandler) Ask(c *gin.Context) {
 	options := service.AskStreamOptions{}
 	modelTenantID := strings.TrimSpace(permission.TenantIDFromContext(c.Request.Context()))
 	if modelTenantID == "" {
-		modelTenantID = permission.UserIDFromContext(c.Request.Context())
-	}
-	if modelTenantID == "" {
-		jsonInternalError(c, permission.ErrUnauthenticated)
+		respondPermissionError(c, permission.ErrTenantContextMissing, true)
 		return
 	}
 	if req.SearchID != "" {
@@ -283,7 +280,10 @@ func (h *SearchBotHandler) Ask(c *gin.Context) {
 		}
 		searchConfig := searchConfigFromDetail(detail)
 		if tenantID, ok := detail["tenant_id"].(string); ok && strings.TrimSpace(tenantID) != "" {
-			modelTenantID = strings.TrimSpace(tenantID)
+			if strings.TrimSpace(tenantID) != modelTenantID {
+				respondPermissionError(c, permission.ErrIdentityMismatch, true)
+				return
+			}
 		}
 		options = service.BuildAskStreamOptions(req.SearchID, searchConfig)
 		if chatID, ok := searchConfig["chat_id"].(string); ok && chatID != "" {
@@ -383,7 +383,8 @@ func (h *SearchBotHandler) MindMap(c *gin.Context) {
 	searchConfig := map[string]interface{}{}
 	modelTenantID := strings.TrimSpace(permission.TenantIDFromContext(c.Request.Context()))
 	if modelTenantID == "" {
-		modelTenantID = permission.UserIDFromContext(c.Request.Context())
+		respondPermissionError(c, permission.ErrTenantContextMissing, true)
+		return
 	}
 	if req.SearchID != "" {
 		if h.searchSvc == nil {
@@ -401,7 +402,10 @@ func (h *SearchBotHandler) MindMap(c *gin.Context) {
 		}
 		searchConfig = searchConfigFromDetail(detail)
 		if tenantID, ok := detail["tenant_id"].(string); ok && strings.TrimSpace(tenantID) != "" {
-			modelTenantID = strings.TrimSpace(tenantID)
+			if strings.TrimSpace(tenantID) != modelTenantID {
+				respondPermissionError(c, permission.ErrIdentityMismatch, true)
+				return
+			}
 		}
 	}
 

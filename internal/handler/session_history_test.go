@@ -45,10 +45,12 @@ func TestSessionHistoryQueryFlags(t *testing.T) {
 				if err := db.AutoMigrate(&entity.Chat{}, &entity.ChatSession{}, &entity.ConversationMessage{}, &entity.API4ConversationMessage{}); err != nil {
 					t.Fatal(err)
 				}
-				if err := db.Create(&entity.Chat{ID: "chat", TenantID: "user-1", LLMID: "model", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DoRefer: "1", Status: sptr("1")}).Error; err != nil {
+				if err := db.Create(&entity.Chat{UserID: "user-1", ID: "chat", TenantID: "user-1", LLMID: "model", LLMSetting: entity.JSONMap{}, PromptConfig: entity.JSONMap{}, KBIDs: entity.JSONSlice{}, DoRefer: "1", Status: sptr("1")}).Error; err != nil {
 					t.Fatal(err)
 				}
-				if err := db.Create(&entity.UserCanvas{ID: "agent", UserID: "user-1"}).Error; err != nil {
+				if err := db.Create(&entity.UserCanvas{ID: "agent", UserID: "user-1",
+					TenantID: sptr("user-1"),
+				}).Error; err != nil {
 					t.Fatal(err)
 				}
 				message := json.RawMessage(`[{"id":"answer","role":"assistant","content":"answer","reference":{"chunks":[],"doc_aggs":[]},"prompt":"large prompt","usage":{"total_tokens":1},"elapsed_ms":50}]`)
@@ -186,7 +188,9 @@ func TestGetAgentSessionIncludeDSL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			c, w, db := setupGinContextWithUserAndDB(t, http.MethodGet, "/api/v1/agents/agent/sessions/session?"+tt.query)
 			c.Params = gin.Params{{Key: "canvas_id", Value: "agent"}, {Key: "session_id", Value: "session"}}
-			if err := db.Create(&entity.UserCanvas{ID: "agent", UserID: "user-1"}).Error; err != nil {
+			if err := db.Create(&entity.UserCanvas{ID: "agent", UserID: "user-1",
+				TenantID: sptr("user-1"),
+			}).Error; err != nil {
 				t.Fatal(err)
 			}
 			if err := dao.NewAPI4ConversationDAO().Create(c.Request.Context(), db, &entity.API4Conversation{

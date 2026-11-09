@@ -69,6 +69,7 @@ func TestResolveModelConfigForStoredMistralOCRProvider(t *testing.T) {
 	if err := db.AutoMigrate(&entity.UserTenant{}, &entity.TenantModelProvider{}, &entity.TenantModelInstance{}, &entity.TenantModel{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	seedTenantOwnerForModelTest(t, db, "tenant-1", "tenant-1")
 	const storedKey = `{"MISTRAL_OCR_API_KEY": "sk-env"}`
 	for _, row := range []interface{}{
 		&entity.TenantModelProvider{ID: "provider-mistral-ocr", UserID: "tenant-1", TenantID: "tenant-1", ProviderName: "Mistral OCR"},
@@ -238,12 +239,35 @@ func TestResolveModelConfigByIDScopedQuerySQL(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = sqlDB.Close() })
 
+	const tenantID = "tenant-' OR 1 = 1 --"
+	const modelID = "model-' OR 1 = 1 --"
+	const ownerUserID = "tenant-owner-user"
+	if err := db.AutoMigrate(
+		&entity.UserTenant{},
+		&entity.TenantModelProvider{},
+		&entity.TenantModelInstance{},
+		&entity.TenantModel{},
+	); err != nil {
+		t.Fatal(err)
+	}
+	ownerStatus := string(entity.StatusValid)
+	for _, row := range []any{
+		&entity.UserTenant{ID: "tenant-owner", UserID: ownerUserID, TenantID: tenantID, Role: "owner", Status: &ownerStatus},
+		&entity.TenantModelProvider{ID: "tenant-provider", UserID: ownerUserID, TenantID: tenantID, ProviderName: "PaddleOCR.local"},
+		&entity.TenantModelInstance{ID: "tenant-instance", ProviderID: "tenant-provider", InstanceName: "default", APIKey: "test-key", Status: "active", Extra: "{}"},
+		&entity.TenantModel{ID: modelID, ProviderID: "tenant-provider", InstanceID: "tenant-instance", ModelName: "PaddleOCR-VL-1.5", ModelType: int(entity.ModelTypeOCR), Status: "active", Extra: "{}"},
+	} {
+		if err := db.Create(row).Error; err != nil {
+			t.Fatalf("seed model lookup row %T: %v", row, err)
+		}
+	}
+
 	var queries []struct {
 		sql  string
 		vars []any
 	}
 	if err := db.Callback().Query().After("gorm:query").Register("test:capture_model_scope_sql", func(tx *gorm.DB) {
-		if tx.DryRun && tx.Statement.Table == "tenant_model" {
+		if tx.Statement.Table == "tenant_model" {
 			queries = append(queries, struct {
 				sql  string
 				vars []any
@@ -252,11 +276,11 @@ func TestResolveModelConfigByIDScopedQuerySQL(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	const tenantID = "tenant-' OR 1 = 1 --"
-	const modelID = "model-' OR 1 = 1 --"
-	// Exercise the real ID branch, rather than rebuilding its query here.
-	// DryRun does not hydrate records, so only the generated SQL is inspected.
-	defaultResolveModelConfig(t.Context(), db.Session(&gorm.Session{DryRun: true}), tenantID, entity.ModelTypeOCR, modelID)
+	// Exercise the real ID branch, rather than rebuilding its query here. The
+	// query callback inspects the SQL generated for the persisted owner relation.
+	if _, _, _, _, err := defaultResolveModelConfig(t.Context(), db, tenantID, entity.ModelTypeOCR, modelID); err != nil {
+		t.Fatalf("resolve model config: %v", err)
+	}
 
 	if len(queries) != 1 {
 		t.Fatalf("model queries=%d, want one scoped lookup: %+v", len(queries), queries)
@@ -266,7 +290,7 @@ func TestResolveModelConfigByIDScopedQuerySQL(t *testing.T) {
 	if query.sql != wantSQL {
 		t.Errorf("scoped SQL=%q, want %q", query.sql, wantSQL)
 	}
-	if len(query.vars) != 3 || query.vars[0] != tenantID || query.vars[2] != modelID {
+	if len(query.vars) != 3 || query.vars[0] != tenantID || query.vars[1] != ownerUserID || query.vars[2] != modelID {
 		t.Errorf("bound vars=%#v, want tenant ID, owner user ID, then model ID", query.vars)
 	}
 	if strings.Contains(query.sql, tenantID) || strings.Contains(query.sql, modelID) {
@@ -356,7 +380,19 @@ func openDispatchModelTestDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(&entity.UserTenant{}, &entity.TenantModelProvider{}, &entity.TenantModelInstance{}, &entity.TenantModel{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	seedTenantOwnerForModelTest(t, db, "tenant-1", "tenant-1")
 	return db
+}
+
+func seedTenantOwnerForModelTest(t *testing.T, db *gorm.DB, tenantID, ownerUserID string) {
+	t.Helper()
+	status := string(entity.StatusValid)
+	if err := db.Create(&entity.UserTenant{
+		ID: "owner-membership-" + tenantID, UserID: ownerUserID, TenantID: tenantID,
+		Role: "owner", Status: &status,
+	}).Error; err != nil {
+		t.Fatalf("seed owner membership for tenant %s: %v", tenantID, err)
+	}
 }
 
 // TestResolveModelConfig_InactiveInstanceIsAnExplicitFailure verifies that a

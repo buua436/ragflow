@@ -135,7 +135,7 @@ func TestUserCanvasDAOUpdateDSLNoMatch(t *testing.T) {
 	}
 }
 
-func TestUserCanvasDAOCreatePersistsOwnerAndTenant(t *testing.T) {
+func TestUserCanvasDAOCreateDoesNotInferTenantFromOwner(t *testing.T) {
 	db := setupUserCanvasTestDB(t)
 	dao := NewUserCanvasDAO()
 	ctx := t.Context()
@@ -153,12 +153,12 @@ func TestUserCanvasDAOCreatePersistsOwnerAndTenant(t *testing.T) {
 	}
 
 	for _, test := range []struct {
-		id           string
-		wantOwnerID  string
-		wantTenantID string
+		id          string
+		wantOwnerID string
+		wantTenant  string
 	}{
-		{id: "canvas-with-tenant", wantOwnerID: ownerID, wantTenantID: tenantID},
-		{id: "canvas-default-tenant", wantOwnerID: ownerID, wantTenantID: ownerID},
+		{id: "canvas-with-tenant", wantOwnerID: ownerID, wantTenant: tenantID},
+		{id: "canvas-default-tenant", wantOwnerID: ownerID},
 	} {
 		persisted, err := dao.GetByID(ctx, db, test.id)
 		if err != nil {
@@ -167,13 +167,17 @@ func TestUserCanvasDAOCreatePersistsOwnerAndTenant(t *testing.T) {
 		if persisted.UserID != test.wantOwnerID {
 			t.Errorf("canvas %q user_id = %q, want %q", test.id, persisted.UserID, test.wantOwnerID)
 		}
-		if got := persisted.EffectiveTenantID(); got != test.wantTenantID {
-			t.Errorf("canvas %q tenant_id = %q, want %q", test.id, got, test.wantTenantID)
+		gotTenant := ""
+		if persisted.TenantID != nil {
+			gotTenant = *persisted.TenantID
+		}
+		if gotTenant != test.wantTenant {
+			t.Errorf("canvas %q tenant_id = %q, want %q", test.id, gotTenant, test.wantTenant)
 		}
 	}
 }
 
-func TestUserCanvasDAOListByIDsReturnsStoredTenantID(t *testing.T) {
+func TestUserCanvasDAOListReturnsStoredTenantID(t *testing.T) {
 	db := setupUserCanvasTestDB(t)
 	ctx := t.Context()
 	if err := db.AutoMigrate(&entity.User{}); err != nil {
@@ -187,7 +191,8 @@ func TestUserCanvasDAOListByIDsReturnsStoredTenantID(t *testing.T) {
 		t.Fatalf("create canvas: %v", err)
 	}
 
-	items, _, err := NewUserCanvasDAO().ListByIDs(ctx, db, []string{"canvas-1"}, nil, 1, 10, nil, "", nil, "", nil)
+	query := db.Model(&entity.UserCanvas{}).Where("user_canvas.id = ?", "canvas-1")
+	items, _, err := NewUserCanvasDAO().List(ctx, query, 1, 10, nil, "", nil, "", nil)
 	if err != nil {
 		t.Fatalf("list canvas: %v", err)
 	}
@@ -231,8 +236,8 @@ func TestUserCanvasDAOListTagsIncludesPipelineWhenCategoryIsEmpty(t *testing.T) 
 		}
 	}
 
-	canvasIDs := []string{"agent-canvas", "pipeline-canvas"}
-	counts, err := dao.ListTagsByCanvasIDs(ctx, db, canvasIDs, "")
+	query := db.Model(&entity.UserCanvas{}).Where("user_canvas.id IN ?", []string{"agent-canvas", "pipeline-canvas"})
+	counts, err := dao.ListTags(ctx, query, "")
 	if err != nil {
 		t.Fatalf("ListTags failed: %v", err)
 	}
@@ -246,7 +251,7 @@ func TestUserCanvasDAOListTagsIncludesPipelineWhenCategoryIsEmpty(t *testing.T) 
 		t.Fatalf("shared count = %d, want 2", counts["shared"])
 	}
 
-	counts, err = dao.ListTagsByCanvasIDs(ctx, db, canvasIDs, "agent_canvas")
+	counts, err = dao.ListTags(ctx, query, "agent_canvas")
 	if err != nil {
 		t.Fatalf("ListTags with category failed: %v", err)
 	}
@@ -289,10 +294,10 @@ func TestUserCanvasDAOOwnerAndCategoryFilters(t *testing.T) {
 		}
 	}
 
-	visibleCanvasIDs := []string{"c1", "c2", "c3"}
-	owners, err := d.GetOwnerFilterByCanvasIDs(ctx, db, visibleCanvasIDs, "")
+	query := db.Model(&entity.UserCanvas{}).Where("user_canvas.id IN ?", []string{"c1", "c2", "c3"})
+	owners, err := d.GetOwnerFilter(ctx, query, "")
 	if err != nil {
-		t.Fatalf("GetOwnerFilterByCanvasIDs failed: %v", err)
+		t.Fatalf("GetOwnerFilter failed: %v", err)
 	}
 	if len(owners) != 2 {
 		t.Fatalf("owner filter rows = %d, want 2", len(owners))
@@ -301,7 +306,7 @@ func TestUserCanvasDAOOwnerAndCategoryFilters(t *testing.T) {
 	for _, o := range owners {
 		byID[o.ID] = o
 	}
-	// The caller passes only policy-authorized canvas IDs; c4 is excluded.
+	// The query selects only the visible canvases; c4 is excluded.
 	if byID["user-1"].Count != 2 {
 		t.Fatalf("user-1 count = %d, want 2", byID["user-1"].Count)
 	}
@@ -312,9 +317,9 @@ func TestUserCanvasDAOOwnerAndCategoryFilters(t *testing.T) {
 		t.Fatalf("user-1 label = %v, want Alice", byID["user-1"].Label)
 	}
 
-	categories, err := d.GetCategoryFilterByCanvasIDs(ctx, db, visibleCanvasIDs)
+	categories, err := d.GetCategoryFilter(ctx, query)
 	if err != nil {
-		t.Fatalf("GetCategoryFilterByCanvasIDs failed: %v", err)
+		t.Fatalf("GetCategoryFilter failed: %v", err)
 	}
 	catByID := make(map[string]int64, len(categories))
 	for _, c := range categories {
@@ -328,10 +333,10 @@ func TestUserCanvasDAOOwnerAndCategoryFilters(t *testing.T) {
 		t.Fatalf("dataflow_canvas count = %d, want 1", catByID["dataflow_canvas"])
 	}
 
-	// Scoped to dataflow_canvas, only c2 remains visible to the aggregation.
-	scopedOwners, err := d.GetOwnerFilterByCanvasIDs(ctx, db, visibleCanvasIDs, "dataflow_canvas")
+	// Scoped to dataflow_canvas, only c2 remains in the aggregation.
+	scopedOwners, err := d.GetOwnerFilter(ctx, query, "dataflow_canvas")
 	if err != nil {
-		t.Fatalf("GetOwnerFilterByCanvasIDs with category failed: %v", err)
+		t.Fatalf("GetOwnerFilter with category failed: %v", err)
 	}
 	if len(scopedOwners) != 1 {
 		t.Fatalf("scoped owner filter rows = %d, want 1", len(scopedOwners))
@@ -366,9 +371,10 @@ func TestUserCanvasDAOKeywordSearchIncludesTags(t *testing.T) {
 		}
 	}
 
-	results, _, err := d.ListByIDs(ctx, db, []string{"c1", "c2"}, nil, 1, 10, []OrderTerm{{Column: "create_time"}}, "finance", nil, "", nil)
+	query := db.Model(&entity.UserCanvas{}).Where("user_canvas.id IN ?", []string{"c1", "c2"})
+	results, _, err := d.List(ctx, query, 1, 10, []OrderTerm{{Column: "create_time"}}, "finance", nil, "", nil)
 	if err != nil {
-		t.Fatalf("ListByIDs: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if len(results) != 1 {
 		t.Fatalf("keyword search 'finance' returned %d rows, want 1 (matched by tag not title)", len(results))
@@ -378,9 +384,9 @@ func TestUserCanvasDAOKeywordSearchIncludesTags(t *testing.T) {
 	}
 }
 
-// TestUserCanvasDAOListByIDsCategoryUnion verifies that a multi-category
+// TestUserCanvasDAOListCategoryUnion verifies that a multi-category
 // canvas_category filter matches the union of the selected categories.
-func TestUserCanvasDAOListByIDsCategoryUnion(t *testing.T) {
+func TestUserCanvasDAOListCategoryUnion(t *testing.T) {
 	db := setupUserCanvasTestDB(t)
 	if err := db.AutoMigrate(&entity.User{}); err != nil {
 		t.Fatalf("failed to migrate user: %v", err)
@@ -403,18 +409,18 @@ func TestUserCanvasDAOListByIDsCategoryUnion(t *testing.T) {
 		}
 	}
 
-	canvasIDs := []string{"c-wf-1", "c-wf-2", "c-df-1"}
-	rows, total, err := d.ListByIDs(ctx, db, canvasIDs, nil, 1, 10, []OrderTerm{{Column: "create_time"}}, "", []string{"dataflow_canvas", "agent_canvas"}, "", nil)
+	query := db.Model(&entity.UserCanvas{}).Where("user_canvas.id IN ?", []string{"c-wf-1", "c-wf-2", "c-df-1"})
+	rows, total, err := d.List(ctx, query, 1, 10, []OrderTerm{{Column: "create_time"}}, "", []string{"dataflow_canvas", "agent_canvas"}, "", nil)
 	if err != nil {
-		t.Fatalf("ListByIDs: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if total != 3 || len(rows) != 3 {
 		t.Fatalf("category union returned total=%d rows=%d, want 3/3", total, len(rows))
 	}
 
-	rows, total, err = d.ListByIDs(ctx, db, canvasIDs, nil, 1, 10, []OrderTerm{{Column: "create_time"}}, "", []string{"agent_canvas"}, "", nil)
+	rows, total, err = d.List(ctx, query, 1, 10, []OrderTerm{{Column: "create_time"}}, "", []string{"agent_canvas"}, "", nil)
 	if err != nil {
-		t.Fatalf("ListByIDs (single category): %v", err)
+		t.Fatalf("List (single category): %v", err)
 	}
 	if total != 2 || len(rows) != 2 {
 		t.Fatalf("single category returned total=%d rows=%d, want 2/2", total, len(rows))
@@ -446,9 +452,10 @@ func TestUserCanvasDAOOrderByTags(t *testing.T) {
 		}
 	}
 
-	results, _, err := d.ListByIDs(ctx, db, []string{"c-z", "c-a", "c-m"}, nil, 1, 10, []OrderTerm{{Column: "tags"}}, "", nil, "", nil)
+	query := db.Model(&entity.UserCanvas{}).Where("user_canvas.id IN ?", []string{"c-z", "c-a", "c-m"})
+	results, _, err := d.List(ctx, query, 1, 10, []OrderTerm{{Column: "tags"}}, "", nil, "", nil)
 	if err != nil {
-		t.Fatalf("ListByIDs: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if len(results) != 3 {
 		t.Fatalf("returned %d rows, want 3", len(results))

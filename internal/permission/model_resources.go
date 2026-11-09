@@ -107,11 +107,7 @@ func (s *databaseSource) loadTenantOwnerIDs(ctx context.Context, tenantIDs []str
 
 func (s *databaseSource) tenantIDsForCurrentUser(ctx context.Context) ([]string, error) {
 	userID := UserIDFromContext(ctx)
-	tenantIDs, err := s.activeTenantIDsForUser(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
-	return uniqueStringValues(append(tenantIDs, userID)), nil
+	return s.activeTenantIDsForUser(ctx, userID)
 }
 
 // modelProviderResource builds permission metadata for a model provider.

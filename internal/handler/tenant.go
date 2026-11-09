@@ -179,16 +179,14 @@ func (h *TenantHandler) TenantList(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/tenant/metadata-store [post]
 func (h *TenantHandler) CreateMetadataStore(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		common.RespondError(c, errorCode, errorMessage)
 		return
 	}
 
-	// Use user.ID as tenant ID (user IS the tenant in user mode)
-	tenantID := user.ID
 	ctx := c.Request.Context()
-	code, err := h.tenantService.CreateMetadataStore(ctx, tenantID)
+	code, err := h.tenantService.CreateMetadataStore(ctx)
 	if err != nil {
 		common.RespondError(c, code, err.Error())
 		return
@@ -207,17 +205,14 @@ func (h *TenantHandler) CreateMetadataStore(c *gin.Context) {
 // @Success 200 {object} map[string]interface{}
 // @Router /v1/tenant/metadata-store [delete]
 func (h *TenantHandler) DeleteMetadataStore(c *gin.Context) {
-	user, errorCode, errorMessage := GetUser(c)
+	_, errorCode, errorMessage := GetUser(c)
 	if errorCode != common.CodeSuccess {
 		common.RespondError(c, errorCode, errorMessage)
 		return
 	}
 
-	// Use user.ID as tenant ID (user IS the tenant in user mode)
-	tenantID := user.ID
-
 	ctx := c.Request.Context()
-	code, err := h.tenantService.DeleteMetadataStore(ctx, tenantID)
+	code, err := h.tenantService.DeleteMetadataStore(ctx)
 	if err != nil {
 		common.RespondError(c, code, err.Error())
 		return

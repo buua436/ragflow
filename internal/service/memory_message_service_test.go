@@ -116,7 +116,7 @@ func TestQueueSaveToMemoryTaskMarksDurableTaskFailedWhenRawStorageFails(t *testi
 	cleanup := testutil.ReplaceDBForTest(t, db)
 	defer cleanup()
 
-	if err := db.Create(&entity.Memory{
+	if err := db.Create(&entity.Memory{UserID: "tenant-1",
 		ID:               "memory-1",
 		Name:             "memory",
 		TenantID:         "tenant-1",

@@ -84,6 +84,7 @@ func TestPipelineExecutor_Run_RealCanvasDSL_UsesGeneralPipeline(t *testing.T) {
 		Permission:     "me",
 		CanvasCategory: "agent_canvas",
 		DSL:            templateDSL,
+		TenantID:       strPtr(tenantID),
 	}).Error; err != nil {
 		t.Fatalf("create user agent: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestPipelineExecutor_Run_RealCanvasDSL_UsesGeneralPipeline(t *testing.T) {
 			Name:       taskStrPtr(docName),
 			PipelineID: taskStrPtr(canvasID),
 		},
-		KB: entity.Knowledgebase{
+		KB: entity.Knowledgebase{UserID: tenantID,
 			ID:       kbID,
 			TenantID: tenantID,
 			EmbdID:   "embd-1",
@@ -209,6 +210,7 @@ func TestPipelineExecutor_Run_RealPDF_ProducesIndexedChunks(t *testing.T) {
 		Permission:     "me",
 		CanvasCategory: "agent_canvas",
 		DSL:            templateDSL,
+		TenantID:       strPtr(tenantID),
 	}).Error; err != nil {
 		t.Fatalf("create user agent: %v", err)
 	}
@@ -229,7 +231,7 @@ func TestPipelineExecutor_Run_RealPDF_ProducesIndexedChunks(t *testing.T) {
 			Name:       taskStrPtr(docName),
 			PipelineID: taskStrPtr(canvasID),
 		},
-		KB: entity.Knowledgebase{
+		KB: entity.Knowledgebase{UserID: tenantID,
 			ID:       kbID,
 			TenantID: tenantID,
 			EmbdID:   "embd-1",
@@ -343,7 +345,7 @@ func TestRunPipeline_RealPipelineOutput_ProducesIndexFields(t *testing.T) {
 			KbID: kbID,
 			Name: taskStrPtr(docName),
 		},
-		KB: entity.Knowledgebase{
+		KB: entity.Knowledgebase{UserID: tenantID,
 			ID:       kbID,
 			TenantID: tenantID,
 			EmbdID:   "embd-1",
@@ -623,7 +625,7 @@ func mustSeedTaskRealPipelineDocumentBytes(
 	}).Error; err != nil {
 		t.Fatalf("create tenant owner membership: %v", err)
 	}
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: tenantID,
 		ID:           kbID,
 		TenantID:     tenantID,
 		EmbdID:       "embd-1",
@@ -636,7 +638,7 @@ func mustSeedTaskRealPipelineDocumentBytes(
 	if err := stg.Put(ctx, bucket, objectPath, content); err != nil {
 		t.Fatalf("put real minio object: %v", err)
 	}
-	if err := db.Create(&entity.File{
+	if err := db.Create(&entity.File{UserID: tenantID,
 		ID:         fileID,
 		ParentID:   bucket,
 		TenantID:   tenantID,
@@ -648,7 +650,7 @@ func mustSeedTaskRealPipelineDocumentBytes(
 	}).Error; err != nil {
 		t.Fatalf("create file: %v", err)
 	}
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: tenantID,
 		ID:           docID,
 		KbID:         kbID,
 		ParserID:     "naive",

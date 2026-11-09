@@ -1719,6 +1719,7 @@ func setupMinerUVisionDispatchDB(t *testing.T, baseURL string) (*gorm.DB, string
 	if err := db.AutoMigrate(&entity.UserTenant{}, &entity.TenantModelProvider{}, &entity.TenantModelInstance{}, &entity.TenantModel{}); err != nil {
 		t.Fatalf("migrate model tables: %v", err)
 	}
+	seedTenantOwnerForModelTest(t, db, "test-tenant", "test-tenant")
 	modelID := "061436bbd8474d54be5bba3efbeac109"
 	rows := []any{
 		&entity.TenantModelProvider{ID: "provider-mineru-1", UserID: "test-tenant", TenantID: "test-tenant", ProviderName: "MinerU"},
@@ -1893,6 +1894,7 @@ func TestResolveTenantOCRModelByProvider_MinerUProviderAlias(t *testing.T) {
 	if err := db.AutoMigrate(&entity.UserTenant{}, &entity.TenantModelProvider{}, &entity.TenantModelInstance{}, &entity.TenantModel{}); err != nil {
 		t.Fatalf("migrate model tables: %v", err)
 	}
+	seedTenantOwnerForModelTest(t, db, "test-tenant", "test-tenant")
 	rows := []any{
 		&entity.TenantModelProvider{ID: "provider-minerunet-1", UserID: "test-tenant", TenantID: "test-tenant", ProviderName: "MinerU.Net"},
 		&entity.TenantModelInstance{ID: "instance-minerunet-1", ProviderID: "provider-minerunet-1", InstanceName: "default", APIKey: "mineru-secret", Status: "active", Extra: "{}"},

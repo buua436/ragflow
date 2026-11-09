@@ -38,7 +38,7 @@ func TestNewMCPServerResponsePreservesNullDescriptionAndFormatsDates(t *testing.
 	createDate := time.Date(2026, 5, 28, 10, 30, 20, 0, location)
 	updateDate := time.Date(2026, 5, 28, 11, 30, 20, 0, location)
 
-	response := newMCPServerResponse(&entity.MCPServer{
+	response := newMCPServerResponse(&entity.MCPServer{UserID: "tenant-id",
 		ID:         "mcp-id",
 		Name:       "server",
 		TenantID:   "tenant-id",

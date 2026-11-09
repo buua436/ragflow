@@ -121,7 +121,7 @@ func TestFileComponent_Invoke_ResolvesDocIDViaDocumentLocation(t *testing.T) {
 		t.Fatalf("seed storage: %v", err)
 	}
 	docName := "report.pdf"
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "u1",
 		ID:           "doc-loc",
 		KbID:         "kb-doc",
 		ParserID:     "na",
@@ -160,7 +160,7 @@ func TestFileComponent_Invoke_ResolvesDocIDViaFileMapping(t *testing.T) {
 		t.Fatalf("seed storage: %v", err)
 	}
 	docName := "deck.pptx"
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "u1",
 		ID:           "doc-file",
 		KbID:         "kb-1",
 		ParserID:     "na",
@@ -172,7 +172,7 @@ func TestFileComponent_Invoke_ResolvesDocIDViaFileMapping(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("seed doc: %v", err)
 	}
-	if err := db.Create(&entity.File{
+	if err := db.Create(&entity.File{UserID: "u1",
 		ID:        "file-1",
 		ParentID:  "folder-1",
 		TenantID:  "tenant-1",
@@ -212,7 +212,7 @@ func TestFileComponent_Invoke_ResolvesDocIDViaFileMapping(t *testing.T) {
 func TestFileComponent_Invoke_DocIDWithoutStorageLocationStillSucceeds(t *testing.T) {
 	withMemoryStorage(t)
 	db := withFileComponentTestDB(t)
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "u1",
 		ID:           "doc-empty",
 		KbID:         "kb-1",
 		ParserID:     "na",

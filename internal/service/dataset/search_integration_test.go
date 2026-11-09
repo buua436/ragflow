@@ -196,7 +196,7 @@ func newSearchIntegrationFixture(t *testing.T) *searchIntegrationFixture {
 			t.Fatal(err)
 		}
 		kb := fmt.Sprintf("kb-%c", 'a'+i)
-		if err := db.Create(&entity.Knowledgebase{ID: kb, Name: kb, TenantID: owner, CreatedBy: owner, Permission: "me", EmbdID: info.ModelID + "@Builtin", TenantEmbdID: &id, ParserConfig: entity.JSONMap{}}).Error; err != nil {
+		if err := db.Create(&entity.Knowledgebase{UserID: owner, ID: kb, Name: kb, TenantID: owner, CreatedBy: owner, Permission: "me", EmbdID: info.ModelID + "@Builtin", TenantEmbdID: &id, ParserConfig: entity.JSONMap{}}).Error; err != nil {
 			t.Fatal(err)
 		}
 		grantDatasetTestResource(t, owner, "kb", kb, owner, "owner")

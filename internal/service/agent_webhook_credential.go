@@ -53,9 +53,15 @@ func (s *AgentWebhookCredentialService) Issue(ctx context.Context, canvas *entit
 		return "", gorm.ErrInvalidDB
 	}
 	userID := strings.TrimSpace(permission.UserIDFromContext(ctx))
-	tenantID := canvas.EffectiveTenantID()
-	if userID == "" || tenantID == "" || strings.TrimSpace(canvas.ID) == "" {
+	if userID == "" {
 		return "", permission.ErrUnauthenticated
+	}
+	if canvas.TenantID == nil || strings.TrimSpace(*canvas.TenantID) == "" {
+		return "", permission.ErrTenantContextMissing
+	}
+	tenantID := strings.TrimSpace(*canvas.TenantID)
+	if strings.TrimSpace(canvas.ID) == "" {
+		return "", permission.ErrInvalidPermission
 	}
 	if contextTenantID := permission.TenantIDFromContext(ctx); contextTenantID != "" && contextTenantID != tenantID {
 		return "", permission.ErrIdentityMismatch
@@ -118,7 +124,7 @@ func (s *AgentWebhookCredentialService) Resolve(ctx context.Context, canvasID, t
 		}
 		return nil, fmt.Errorf("load webhook canvas: %w", err)
 	}
-	if canvas.EffectiveTenantID() != credential.TenantID {
+	if canvas.TenantID == nil || strings.TrimSpace(*canvas.TenantID) != credential.TenantID {
 		return nil, ErrInvalidAgentWebhookCredential
 	}
 	if userID := permission.UserIDFromContext(ctx); userID != "" && userID != credential.UserID {

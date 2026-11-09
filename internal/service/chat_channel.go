@@ -89,18 +89,15 @@ func getChatChannelRuntimeProvider() ChatChannelRuntimeProvider {
 }
 
 func (s *ChatChannelService) List(ctx context.Context) ([]*entity.ChatChannelListResponse, error) {
-	channelScope, err := permission.NewDatabaseChecker(dao.DB).Scope(ctx, permission.ScopeQuery{
+	channelScope, err := permission.NewDatabaseChecker(dao.DB).QueryScope(ctx, permission.ScopeQuery{
 		Kind:      permission.ResourceKindChatChannel,
 		Operation: permission.OperationRead,
 	})
 	if err != nil {
 		return nil, err
 	}
-	channelIDs := channelScope.ResourceIDs
-	if channelScope.Mode != permission.ScopeIDs {
-		channelIDs = []string{}
-	}
-	return s.chatChannelDAO.ListByIDs(ctx, dao.DB, channelIDs)
+	query := channelScope.Apply(dao.DB.WithContext(ctx).Model(&entity.ChatChannel{}))
+	return s.chatChannelDAO.List(ctx, query)
 }
 
 func (s *ChatChannelService) CreateChatChannel(ctx context.Context, name, channelType string, config entity.JSONMap, chatID, agentID *string) (*entity.ChatChannel, error) {
@@ -114,9 +111,6 @@ func (s *ChatChannelService) CreateChatChannel(ctx context.Context, name, channe
 	}
 	chatID, agentID = normalizedChannelTarget(chatID), normalizedChannelTarget(agentID)
 	if err := validateChannelBinding(ctx, chatID, agentID); err != nil {
-		return nil, err
-	}
-	if err := validateChannelBinding(permission.WithIdentity(ctx, tenantID, tenantID), chatID, agentID); err != nil {
 		return nil, err
 	}
 	name = strings.TrimSpace(name)
@@ -232,11 +226,9 @@ func (s *ChatChannelService) UpdateChatChannel(ctx context.Context, channelID st
 		if chatID != nil && agentID != nil {
 			return nil, common.CodeDataError, errors.New("chat_id and agent_id are mutually exclusive")
 		}
-		for _, bindingCtx := range []context.Context{ctx, permission.WithIdentity(ctx, channel.TenantID, channel.TenantID)} {
-			if err := validateChannelBinding(bindingCtx, chatID, agentID); err != nil {
-				code, normalizedErr := permissionresponse.NormalizeHidden(err)
-				return nil, code, normalizedErr
-			}
+		if err := validateChannelBinding(ctx, chatID, agentID); err != nil {
+			code, normalizedErr := permissionresponse.NormalizeHidden(err)
+			return nil, code, normalizedErr
 		}
 		updates["chat_id"], updates["agent_id"] = chatID, agentID
 	}
@@ -303,7 +295,7 @@ func (s *ChatChannelService) HandleIncomingMessage(ctx context.Context, msg Chat
 	if channel.Status != 1 {
 		return "", nil
 	}
-	ownerCtx := permission.WithIdentity(ctx, channel.TenantID, channel.TenantID)
+	ownerCtx := permission.WithIdentity(ctx, channel.UserID, channel.TenantID)
 	if err := validateChannelBinding(ownerCtx, channel.ChatID, channel.AgentID); err != nil {
 		return "", err
 	}
@@ -342,7 +334,7 @@ func (s *ChatChannelService) HandleIncomingMessage(ctx context.Context, msg Chat
 
 	// Channel chat sessions are owned by the dialog tenant; authorization above
 	// separately enforces the channel owner's current access to that dialog.
-	completionCtx := permission.WithIdentity(ctx, dialog.TenantID, dialog.TenantID)
+	completionCtx := permission.WithIdentity(ctx, channel.UserID, dialog.TenantID)
 	result, err := s.chatSessionSvc.ChatCompletions(
 		completionCtx,
 		dialog.ID,

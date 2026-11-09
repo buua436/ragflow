@@ -292,12 +292,10 @@ func (dao *MemoryDAO) GetWithOwnerNameByID(ctx context.Context, db *gorm.DB, id 
 	}, nil
 }
 
-// GetByFilter retrieves authorized memories with optional business filters.
-// memoryIDs must come from the permission layer; tenantIDs only narrows that
-// authorized set. Results include owner_name from the user table.
+// GetByFilter retrieves memories from an already-scoped query with optional business filters.
 //
 // Parameters:
-//   - memoryIDs: Authorized memory IDs (empty means no results)
+//   - query: A database query already constrained by the permission layer
 //   - tenantIDs: Optional tenant IDs to filter the authorized results by
 //   - memoryTypes: Array of memory type names to filter by (empty means all types)
 //   - storageType: Storage type to filter by (empty means all types)
@@ -312,70 +310,43 @@ func (dao *MemoryDAO) GetWithOwnerNameByID(ctx context.Context, db *gorm.DB, id 
 //
 // Example:
 //
-//	memories, total, err := dao.GetByFilter(ctx, db, authorizedIDs, nil, []string{"semantic"}, "table", "test", 1, 10)
-func (dao *MemoryDAO) GetByFilter(ctx context.Context, db *gorm.DB, memoryIDs, tenantIDs, memoryTypes []string, storageType string, keywords string, page int, pageSize int) ([]*entity.MemoryListItem, int64, error) {
-	if len(memoryIDs) == 0 {
-		return []*entity.MemoryListItem{}, 0, nil
+//	memories, total, err := dao.GetByFilter(ctx, query, []string{"semantic"}, "table", "test", 1, 10)
+func (dao *MemoryDAO) GetByFilter(ctx context.Context, query *gorm.DB, memoryTypes []string, storageType string, keywords string, page int, pageSize int) ([]*entity.MemoryListItem, int64, error) {
+	if query == nil {
+		return nil, 0, fmt.Errorf("memory list query is nil")
 	}
-	conditions := []string{"m.id IN ?"}
-	args := []interface{}{memoryIDs}
-
-	if len(tenantIDs) > 0 {
-		conditions = append(conditions, "m.tenant_id IN ?")
-		args = append(args, tenantIDs)
-	}
+	query = query.WithContext(ctx).
+		Select("memory.*, user.nickname AS owner_name").
+		Joins("LEFT JOIN user ON memory.user_id = user.id")
 
 	if len(memoryTypes) > 0 {
 		memoryTypeInt := CalculateMemoryType(memoryTypes)
-		conditions = append(conditions, "m.memory_type & ? > 0")
-		args = append(args, memoryTypeInt)
+		query = query.Where("memory.memory_type & ? > 0", memoryTypeInt)
 	}
 
 	if storageType != "" {
-		conditions = append(conditions, "m.storage_type = ?")
-		args = append(args, storageType)
+		query = query.Where("memory.storage_type = ?", storageType)
 	}
 
 	if keywords != "" {
-		conditions = append(conditions, "m.name LIKE ?")
-		args = append(args, "%"+keywords+"%")
+		query = query.Where("memory.name LIKE ?", "%"+keywords+"%")
 	}
 
-	whereClause := ""
-	if len(conditions) > 0 {
-		whereClause = "WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	countSQL := fmt.Sprintf("SELECT COUNT(*) FROM memory m %s", whereClause)
 	var total int64
-	if err := db.WithContext(ctx).Raw(countSQL, args...).Scan(&total).Error; err != nil {
+	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
-	querySQL := fmt.Sprintf(`
-		SELECT m.id, m.name, m.avatar, m.tenant_id, m.memory_type,
-			m.storage_type, m.embd_id, m.tenant_embd_id, m.llm_id, m.tenant_llm_id,
-			m.permissions, m.description, m.memory_size, m.forgetting_policy,
-			m.temperature, m.system_prompt, m.user_prompt, m.create_time, m.create_date,
-			m.update_time, m.update_date,
-			u.nickname as owner_name
-		FROM memory m
-		LEFT JOIN user u ON m.tenant_id = u.id
-		%s
-		ORDER BY m.create_time DESC
-	`, whereClause)
-	queryArgs := args
+	query = query.Order("memory.create_time DESC")
 	if pageSize > 0 {
-		querySQL += " LIMIT ? OFFSET ?"
-		queryArgs = append(queryArgs, pageSize, (page-1)*pageSize)
+		query = query.Limit(pageSize).Offset(max(0, page-1) * pageSize)
 	}
 
 	var rawResults []struct {
 		entity.Memory
 		OwnerName *string `gorm:"column:owner_name"`
 	}
-
-	if err := db.WithContext(ctx).Raw(querySQL, queryArgs...).Scan(&rawResults).Error; err != nil {
+	if err := query.Scan(&rawResults).Error; err != nil {
 		return nil, 0, err
 	}
 

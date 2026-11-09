@@ -529,22 +529,19 @@ func (s *AgentService) ListAgentFilters(ctx context.Context, canvasCategory stri
 		return s.listCompilationGroupFilters(ctx)
 	}
 
-	canvasScope, err := permission.NewDatabaseChecker(dao.DB).Scope(ctx, permission.ScopeQuery{
+	canvasScope, err := permission.NewDatabaseChecker(dao.DB).QueryScope(ctx, permission.ScopeQuery{
 		Kind:      permission.ResourceKindCanvas,
 		Operation: permission.OperationRead,
 	})
 	if err != nil {
 		return nil, common.CodeServerError, fmt.Errorf("failed to scope accessible canvases: %w", err)
 	}
-	canvasIDs := canvasScope.ResourceIDs
-	if canvasScope.Mode == permission.ScopeNone {
-		canvasIDs = []string{}
-	}
-	owners, err := s.canvasDAO.GetOwnerFilterByCanvasIDs(ctx, dao.DB, canvasIDs, canvasCategory)
+	canvasQuery := canvasScope.Apply(dao.DB.WithContext(ctx).Model(&entity.UserCanvas{}))
+	owners, err := s.canvasDAO.GetOwnerFilter(ctx, canvasQuery, canvasCategory)
 	if err != nil {
 		return nil, common.CodeServerError, fmt.Errorf("failed to aggregate agent owners: %w", err)
 	}
-	categories, err := s.canvasDAO.GetCategoryFilterByCanvasIDs(ctx, dao.DB, canvasIDs)
+	categories, err := s.canvasDAO.GetCategoryFilter(ctx, canvasQuery)
 	if err != nil {
 		return nil, common.CodeServerError, fmt.Errorf("failed to aggregate agent categories: %w", err)
 	}
@@ -661,36 +658,18 @@ func toAgentItem(c *dao.UserCanvasListItem) *AgentItem {
 }
 
 // ListAgents returns agent canvases visible to the authenticated caller.
-// Mirrors Python agent_api.list_agents — validates owner_ids against joined tenants,
-// then delegates to the DAO.
-func (s *AgentService) ListAgents(ctx context.Context, keywords string, page, pageSize int, terms []dao.OrderTerm, ownerIDs []string, canvasCategory, canvasType string, tags []string) (*ListAgentsResponse, common.ErrorCode, error) {
+func (s *AgentService) ListAgents(ctx context.Context, keywords string, page, pageSize int, terms []dao.OrderTerm, ownerUserIDs []string, canvasCategory, canvasType string, tags []string) (*ListAgentsResponse, common.ErrorCode, error) {
 	userID := permission.UserIDFromContext(ctx)
 	checker := permission.NewDatabaseChecker(dao.DB)
-	canvasScope, err := checker.Scope(ctx, permission.ScopeQuery{
-		Kind:      permission.ResourceKindCanvas,
-		Operation: permission.OperationRead,
+	canvasScope, err := checker.QueryScope(ctx, permission.ScopeQuery{
+		Kind:         permission.ResourceKindCanvas,
+		Operation:    permission.OperationRead,
+		OwnerUserIDs: ownerUserIDs,
 	})
 	if err != nil {
 		return nil, common.CodeServerError, fmt.Errorf("failed to scope accessible canvases: %w", err)
 	}
-	canvasIDs := canvasScope.ResourceIDs
-	if canvasScope.Mode == permission.ScopeNone {
-		canvasIDs = []string{}
-	}
-	if len(ownerIDs) > 0 {
-		for _, id := range ownerIDs {
-			if id == userID {
-				continue
-			}
-			if err := checker.CheckTenant(ctx, id, permission.TenantMember); err != nil {
-				if errors.Is(err, permission.ErrMembershipNotFound) {
-					return nil, common.CodeOperatingError, fmt.Errorf("only authorized owner_ids can be queried")
-				}
-				return nil, common.CodeServerError, fmt.Errorf("validate agent owner_id: %w", err)
-			}
-		}
-	}
-	effectiveOwnerIDs := ownerIDs
+	effectiveOwnerIDs := ownerUserIDs
 
 	// A canvas entry is either an agent (user_canvas) or a compilation template
 	// group. Python splits canvas_category on commas and, when the tenant is the
@@ -707,7 +686,7 @@ func (s *AgentService) ListAgents(ctx context.Context, keywords string, page, pa
 	// the caller is an effective owner; otherwise (e.g. owner_ids names another
 	// user) return an empty list (review Major).
 	if len(categories) == 1 && wantsGroups {
-		if len(ownerIDs) > 0 && !sliceContains(effectiveOwnerIDs, userID) {
+		if len(ownerUserIDs) > 0 && !sliceContains(effectiveOwnerIDs, userID) {
 			return &ListAgentsResponse{Canvas: []json.RawMessage{}, Total: 0}, common.CodeSuccess, nil
 		}
 		return s.listAgentsGroupsOnly(ctx, keywords, terms, page, pageSize)
@@ -719,11 +698,10 @@ func (s *AgentService) ListAgents(ctx context.Context, keywords string, page, pa
 	if mergeMode || (wantsGroups && len(agentCategories) > 0) {
 		listPage, listSize = 0, 0
 	}
-	canvases, total, err := s.canvasDAO.ListByIDs(
+	canvasQuery := canvasScope.Apply(dao.DB.WithContext(ctx).Model(&entity.UserCanvas{}))
+	canvases, total, err := s.canvasDAO.List(
 		ctx,
-		dao.DB,
-		canvasIDs,
-		effectiveOwnerIDs,
+		canvasQuery,
 		listPage,
 		listSize,
 		terms,
@@ -736,24 +714,29 @@ func (s *AgentService) ListAgents(ctx context.Context, keywords string, page, pa
 		return nil, common.CodeServerError, fmt.Errorf("failed to list agents: %w", err)
 	}
 
+	refs := make([]permission.ResourceRef, len(canvases))
+	for i, canvas := range canvases {
+		refs[i] = permission.ResourceRef{Kind: permission.ResourceKindCanvas, ID: canvas.ID}
+	}
+	accesses, err := checker.FilterAccesses(ctx, refs, permission.OperationRead)
+	if err != nil {
+		return nil, common.CodeServerError, fmt.Errorf("resolve agent permissions: %w", err)
+	}
 	agentItems := make([]*AgentItem, len(canvases))
-	for i, c := range canvases {
-		access, accessErr := checker.ResolveAccess(ctx, permission.ResourceRef{
-			Kind: permission.ResourceKindCanvas,
-			ID:   c.ID,
-		})
-		if accessErr != nil {
-			return nil, common.CodeServerError, fmt.Errorf("resolve agent permissions: %w", accessErr)
+	for i, canvas := range canvases {
+		access, ok := accesses[refs[i]]
+		if !ok {
+			return nil, common.CodeOperatingError, permission.ErrPermissionDenied
 		}
-		c.OperatorPermission = access.PermissionMask
-		agentItems[i] = toAgentItem(c)
+		canvas.OperatorPermission = access.PermissionMask
+		agentItems[i] = toAgentItem(canvas)
 	}
 	s.attachReleaseTimes(ctx, agentItems)
 
 	// Groups are owner-only (no team sharing) and scoped to the caller, so they
 	// are merged only when the caller's own tenant is an effective owner
 	// (Python include_template_groups).
-	includeGroups := len(ownerIDs) == 0 || sliceContains(effectiveOwnerIDs, userID)
+	includeGroups := len(ownerUserIDs) == 0 || sliceContains(effectiveOwnerIDs, userID)
 	if includeGroups && (mergeMode || wantsGroups) {
 		return s.mergeAgentsAndGroups(ctx, agentItems, keywords, terms, page, pageSize)
 	}
@@ -1333,7 +1316,10 @@ func (s *AgentService) UpdateAgent(ctx context.Context, canvasID string, patch m
 		if err := validateEntries(dslMap); err != nil {
 			return fmt.Errorf("update agent %s: %w", canvasID, err)
 		}
-		if err := validateAgentChatModelReferences(ctx, canvasInstance.EffectiveTenantID(), dslMap, !release); err != nil {
+		if canvasInstance.TenantID == nil || strings.TrimSpace(*canvasInstance.TenantID) == "" {
+			return permission.ErrTenantContextMissing
+		}
+		if err := validateAgentChatModelReferences(ctx, strings.TrimSpace(*canvasInstance.TenantID), dslMap, !release); err != nil {
 			return err
 		}
 		updates["dsl"] = entity.JSONMap(dslpkg.NormalizeForCanvas(dslMap))
@@ -1496,7 +1482,10 @@ func (s *AgentService) PublishAgent(ctx context.Context, canvasID string, req *P
 		}
 	}
 
-	if err := validateAgentChatModels(ctx, canvasInstance.EffectiveTenantID(), dsl); err != nil {
+	if canvasInstance.TenantID == nil || strings.TrimSpace(*canvasInstance.TenantID) == "" {
+		return nil, permission.ErrTenantContextMissing
+	}
+	if err := validateAgentChatModels(ctx, strings.TrimSpace(*canvasInstance.TenantID), dsl); err != nil {
 		return nil, err
 	}
 	if err := component.ValidateDynamicEntries(dsl); err != nil {
@@ -1712,7 +1701,10 @@ func (s *AgentService) RunAgent(ctx context.Context, canvasID, sessionID, versio
 	if err != nil {
 		return nil, err
 	}
-	agentTenantID := canvasRow.EffectiveTenantID()
+	if canvasRow.TenantID == nil || strings.TrimSpace(*canvasRow.TenantID) == "" {
+		return nil, permission.ErrTenantContextMissing
+	}
+	agentTenantID := strings.TrimSpace(*canvasRow.TenantID)
 	newSession := sessionID == ""
 	if sessionID == "" {
 		sessionID = common.GenerateToken()
@@ -1906,6 +1898,7 @@ func (s *AgentService) RunAgent(ctx context.Context, canvasID, sessionID, versio
 		versionRow *entity.UserCanvasVersion
 		dsl        map[string]any
 	)
+	var persistedSessionDSL map[string]any
 	if version != "" {
 		row, err := s.versionDAO.GetByID(ctx, dao.DB, version)
 		if err != nil {
@@ -1942,8 +1935,14 @@ func (s *AgentService) RunAgent(ctx context.Context, canvasID, sessionID, versio
 		}
 		sessionFound = existingSession != nil
 		if existingSession != nil && len(existingSession.DSL) > 0 {
-			dsl = dslpkg.NormalizeForRun(existingSession.DSL)
+			persistedSessionDSL = existingSession.DSL
 		}
+	}
+	dsl, forceNewRun, resumeInterruptID, err := s.prepareAgentSessionRun(
+		ctx, runID, canvasID, sessionID, version, userInput, dsl, persistedSessionDSL,
+	)
+	if err != nil {
+		return nil, err
 	}
 	if err := validateAgentChatModels(ctx, agentTenantID, dsl); err != nil {
 		return nil, err
@@ -1975,6 +1974,9 @@ func (s *AgentService) RunAgent(ctx context.Context, canvasID, sessionID, versio
 		"session_id":     sessionID,
 		"user_id":        userID,
 	}
+	if forceNewRun {
+		root["__force_new_run__"] = true
+	}
 	// Drop failed first-touch sessions only when there was no user question.
 	if (!sessionFound || newSession) && stringifyAgentUserInput(agentRunQuery(userInput)) == "" {
 		root["__drop_session_on_failure__"] = true
@@ -1984,11 +1986,9 @@ func (s *AgentService) RunAgent(ctx context.Context, canvasID, sessionID, versio
 	// cancellation identity.
 	// Recover a pending UserFillUp interrupt from Redis when this request
 	// lands on a different process.
-	if userInput != nil && s.runTracker != nil {
-		if interruptID, ok, ierr := s.runTracker.GetInterruptID(ctx, runID); ierr == nil && ok {
-			root["__resume_interrupt_id__"] = interruptID
-			root["__resume_data__"] = userInput
-		}
+	if resumeInterruptID != "" {
+		root["__resume_interrupt_id__"] = resumeInterruptID
+		root["__resume_data__"] = userInput
 	}
 	if userInput != nil {
 		root["user_input"] = userInput
@@ -2468,6 +2468,9 @@ func (s *AgentService) buildRunFunc(canvasID string, versionRow *entity.UserCanv
 		var invokeOpts []compose.Option
 		if cpID != "" {
 			invokeOpts = []compose.Option{compose.WithCheckPointID(cpID)}
+		}
+		if forceNewRun, _ := root["__force_new_run__"].(bool); forceNewRun {
+			invokeOpts = append(invokeOpts, compose.WithForceNewRun())
 		}
 		// On a resume, the user input is the resume payload for the
 		// previously-paused UserFillUp node — it does NOT represent

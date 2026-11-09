@@ -38,11 +38,11 @@ func TestListVersionCatalog(t *testing.T) {
 		t.Run(category, func(t *testing.T) {
 			c, w, db := setupGinContextWithUserAndDB(t, "GET", "/api/v1/agents/versions?category="+category)
 			canvases := []entity.UserCanvas{
-				{ID: "pipe-1", UserID: "user-1", Title: sptr("Invoices"), Description: sptr("Invoice parser"), CanvasCategory: "dataflow_canvas"},
-				{ID: "pipe-empty", UserID: "user-1", CanvasCategory: "dataflow_canvas"},
-				{ID: "agent-1", UserID: "user-1", Title: sptr("Assistant"), CanvasCategory: "agent_canvas"},
-				{ID: "foreign", UserID: "user-2", CanvasCategory: "dataflow_canvas"},
-				{ID: "foreign-agent", UserID: "user-2", CanvasCategory: "agent_canvas"},
+				{ID: "pipe-1", UserID: "user-1", TenantID: sptr("user-1"), Title: sptr("Invoices"), Description: sptr("Invoice parser"), CanvasCategory: "dataflow_canvas"},
+				{ID: "pipe-empty", UserID: "user-1", TenantID: sptr("user-1"), CanvasCategory: "dataflow_canvas"},
+				{ID: "agent-1", UserID: "user-1", TenantID: sptr("user-1"), Title: sptr("Assistant"), CanvasCategory: "agent_canvas"},
+				{ID: "foreign", UserID: "user-2", TenantID: sptr("user-2"), CanvasCategory: "dataflow_canvas"},
+				{ID: "foreign-agent", UserID: "user-2", TenantID: sptr("user-2"), CanvasCategory: "agent_canvas"},
 			}
 			if err := db.Create(&canvases).Error; err != nil {
 				t.Fatal(err)
@@ -178,7 +178,7 @@ func TestListVersionCatalogSharedPipeline(t *testing.T) {
 	if err := db.Create(&canvases).Error; err != nil {
 		t.Fatal(err)
 	}
-	if err := testsupport.PrepareEnterprisePermissionFixture(db, "team"); err != nil {
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "team", "user-2", "user-1"); err != nil {
 		t.Fatal(err)
 	}
 	(&AgentHandler{agentService: service.NewAgentService()}).ListVersionCatalog(c)
@@ -203,7 +203,9 @@ func TestListVersionCatalogFailure(t *testing.T) {
 				cancel()
 				c.Request = c.Request.WithContext(ctx)
 			} else {
-				if err := db.Create(&entity.UserCanvas{ID: "pipeline", UserID: "user-1", CanvasCategory: "dataflow_canvas"}).Error; err != nil {
+				if err := db.Create(&entity.UserCanvas{ID: "pipeline", UserID: "user-1", CanvasCategory: "dataflow_canvas",
+					TenantID: sptr("user-1"),
+				}).Error; err != nil {
 					t.Fatal(err)
 				}
 				if err := db.Migrator().DropTable(&entity.UserCanvasVersion{}); err != nil {

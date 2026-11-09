@@ -42,7 +42,7 @@ func TestStartIsolatesMalformedChannelAndKeepsReconciling(t *testing.T) {
 	if err := db.AutoMigrate(&entity.ChatChannel{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&entity.ChatChannel{
+	if err := db.Create(&entity.ChatChannel{UserID: "tenant",
 		ID: "invalid", TenantID: "tenant", Name: "invalid", Channel: "telegram",
 		Config: entity.JSONMap{}, Status: 1,
 	}).Error; err != nil {

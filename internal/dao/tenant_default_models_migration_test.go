@@ -61,7 +61,7 @@ func TestMigrateTenantDefaultModelsOnlyMovesValuesToOwner(t *testing.T) {
 	memberships := []entity.UserTenant{
 		{ID: "owner-role", UserID: "owner-user", TenantID: "tenant-1", Role: "owner", Status: &joined},
 		{ID: "member-1", UserID: "member-user", TenantID: "tenant-1", Role: "member-role-id", Status: &joined},
-		{ID: "owner-id-match", UserID: "tenant-2", TenantID: "tenant-2", Role: "owner-role-id", Status: &joined},
+		{ID: "owner-role-2", UserID: "owner-user-2", TenantID: "tenant-2", Role: "owner", Status: &joined},
 		{ID: "member-2", UserID: "member-user-2", TenantID: "tenant-2", Role: "member-role-id", Status: &joined},
 	}
 	if err := db.Create(&memberships).Error; err != nil {
@@ -82,7 +82,7 @@ func TestMigrateTenantDefaultModelsOnlyMovesValuesToOwner(t *testing.T) {
 	}{
 		{id: "owner-role", tenantID: "tenant-1", migrated: true},
 		{id: "member-1", tenantID: "tenant-1"},
-		{id: "owner-id-match", tenantID: "tenant-2", migrated: true},
+		{id: "owner-role-2", tenantID: "tenant-2", migrated: true},
 		{id: "member-2", tenantID: "tenant-2"},
 	} {
 		var got entity.UserTenant

@@ -246,9 +246,18 @@ func TestRunAgent_ToolHistoryPersists(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := db.Create(&entity.MCPServer{ID: "mcp-tool-history", TenantID: "tenant-1",
+			if err := db.Create(&entity.MCPServer{UserID: "user-1", ID: "mcp-tool-history", TenantID: "tenant-1",
 				Name: "synthetic lookup", URL: mcp.URL, ServerType: mcpclient.TransportStreamableHTTP}).Error; err != nil {
 				t.Fatal(err)
+			}
+			checker := permission.NewDatabaseChecker(db)
+			for _, ref := range []permission.ResourceRef{
+				{Kind: permission.ResourceKindCanvas, ID: canvasID},
+				{Kind: permission.ResourceKindMCPServer, ID: "mcp-tool-history"},
+			} {
+				if err := checker.GrantResourceOwner(ctx, ref); err != nil {
+					t.Fatalf("grant test resource owner %+v: %v", ref, err)
+				}
 			}
 			tracker, _ := newAgentCancelTracker(t)
 			svc := NewAgentServiceWithOptions(nil, nil, tracker)

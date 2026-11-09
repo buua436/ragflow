@@ -24,6 +24,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 )
 
 func TestListLogsPaginationModes(t *testing.T) {
@@ -33,7 +34,7 @@ func TestListLogsPaginationModes(t *testing.T) {
 		t.Fatalf("migrate connector tables: %v", err)
 	}
 
-	if err := db.Create(&entity.Connector{
+	if err := db.Create(&entity.Connector{UserID: "user-1",
 		ID:          "conn-1",
 		TenantID:    "user-1",
 		Name:        "conn-1",
@@ -47,7 +48,7 @@ func TestListLogsPaginationModes(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("insert connector: %v", err)
 	}
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID:        "kb-1",
 		TenantID:  "user-1",
 		Name:      "kb-1",
@@ -79,6 +80,15 @@ func TestListLogsPaginationModes(t *testing.T) {
 
 	svc := NewConnectorService()
 	ctx := serviceTestContext(t, "user-1", "user-1")
+	checker := permission.NewDatabaseChecker(db)
+	for _, ref := range []permission.ResourceRef{
+		{Kind: permission.ResourceKindConnector, ID: "conn-1"},
+		{Kind: permission.ResourceKindDataset, ID: "kb-1"},
+	} {
+		if err := checker.GrantResourceOwner(ctx, ref); err != nil {
+			t.Fatalf("grant log resource owner %+v: %v", ref, err)
+		}
+	}
 
 	all, total, code, err := svc.ListLogs(ctx, "", 1, 0)
 	if err != nil || code != common.CodeSuccess {
@@ -123,7 +133,7 @@ func TestListLogsStatusPriority(t *testing.T) {
 		t.Fatalf("migrate connector tables: %v", err)
 	}
 
-	if err := db.Create(&entity.Connector{
+	if err := db.Create(&entity.Connector{UserID: "user-1",
 		ID:          "conn-1",
 		TenantID:    "user-1",
 		Name:        "conn-1",
@@ -137,7 +147,7 @@ func TestListLogsStatusPriority(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("insert connector: %v", err)
 	}
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID:        "kb-1",
 		TenantID:  "user-1",
 		Name:      "kb-1",
@@ -182,6 +192,15 @@ func TestListLogsStatusPriority(t *testing.T) {
 
 	svc := NewConnectorService()
 	ctx := serviceTestContext(t, "user-1", "user-1")
+	checker := permission.NewDatabaseChecker(db)
+	for _, ref := range []permission.ResourceRef{
+		{Kind: permission.ResourceKindConnector, ID: "conn-1"},
+		{Kind: permission.ResourceKindDataset, ID: "kb-1"},
+	} {
+		if err := checker.GrantResourceOwner(ctx, ref); err != nil {
+			t.Fatalf("grant log resource owner %+v: %v", ref, err)
+		}
+	}
 
 	byConnector, total, code, err := svc.ListLog(ctx, "conn-1", 1, 100)
 	if err != nil || code != common.CodeSuccess {

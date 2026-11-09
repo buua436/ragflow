@@ -1,4 +1,4 @@
-//go:build !enterprise
+//go:build !ee
 
 package permission
 
@@ -69,7 +69,7 @@ func TestCommunityPolicyResolvesResourceTenant(t *testing.T) {
 	}
 }
 
-func TestCommunityPolicyUsesResourceTenantInsteadOfActiveTenant(t *testing.T) {
+func TestCommunityPolicyRejectsResourceOutsideActiveTenant(t *testing.T) {
 	resourceRef := ResourceRef{Kind: "dataset", ID: "dataset-1"}
 	source := &permissionTestSource{
 		memberships: map[string]*Membership{
@@ -85,17 +85,30 @@ func TestCommunityPolicyUsesResourceTenantInsteadOfActiveTenant(t *testing.T) {
 		},
 	}
 
-	access, err := NewChecker(source).ResolveAccess(WithIdentity(context.Background(), "user-1", "another-tenant"), resourceRef)
-	if err != nil {
-		t.Fatalf("ResolveAccess() error = %v", err)
+	checker := NewChecker(source)
+	if _, err := checker.ResolveAccess(WithIdentity(context.Background(), "user-1", "another-tenant"), resourceRef); !errors.Is(err, ErrResourceNotFound) {
+		t.Fatalf("ResolveAccess() error = %v, want resource not found outside the active tenant", err)
 	}
-	if access.TenantID != "tenant-resource" {
-		t.Fatalf("ResolveAccess() tenant = %q, want resource tenant", access.TenantID)
+	access, err := checker.ResolveAccess(WithIdentity(context.Background(), "user-1", "tenant-resource"), resourceRef)
+	if err != nil || access.TenantID != "tenant-resource" {
+		t.Fatalf("ResolveAccess() = %+v, %v; want access in the active resource tenant", access, err)
 	}
 
 	_, err = NewChecker(source).ResolveAccess(WithIdentity(context.Background(), "unrelated-user", "tenant-resource"), resourceRef)
 	if !errors.Is(err, ErrPermissionDenied) {
 		t.Fatalf("ResolveAccess() error = %v, want %v for a non-member", err, ErrPermissionDenied)
+	}
+}
+
+func TestCheckerQueryScopeRejectsTenantMismatch(t *testing.T) {
+	checker := NewChecker(&permissionTestSource{})
+	_, err := checker.QueryScope(WithIdentity(context.Background(), "user-1", "active-tenant"), ScopeQuery{
+		Kind:      ResourceKindDataset,
+		Operation: OperationRead,
+		TenantID:  "other-tenant",
+	})
+	if !errors.Is(err, ErrIdentityMismatch) {
+		t.Fatalf("QueryScope() error = %v, want identity mismatch", err)
 	}
 }
 
@@ -189,7 +202,7 @@ func TestCommunityPolicyScopeUsesParentResourceTenant(t *testing.T) {
 		candidates: []ResourceRef{childRef},
 	}
 
-	scope, err := NewChecker(source).Scope(WithIdentity(context.Background(), "user-1", ""), ScopeQuery{
+	scope, err := NewChecker(source).scope(WithIdentity(context.Background(), "user-1", ""), ScopeQuery{
 		Kind: "document", Parent: parentRef, Operation: OperationRead,
 	})
 	if err != nil {
@@ -198,7 +211,7 @@ func TestCommunityPolicyScopeUsesParentResourceTenant(t *testing.T) {
 	if scope.TenantID != "dataset-tenant" {
 		t.Fatalf("Scope() tenant = %q, want parent tenant", scope.TenantID)
 	}
-	if scope.Mode != ScopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != childRef.ID {
+	if scope.Mode != scopeIDs || len(scope.ResourceIDs) != 1 || scope.ResourceIDs[0] != childRef.ID {
 		t.Fatalf("Scope() = %#v, want the accessible child ID", scope)
 	}
 }

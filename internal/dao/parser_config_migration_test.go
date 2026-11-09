@@ -115,7 +115,7 @@ func TestMigrateGeneralChunkerParserConfigsUpdatesBuiltinRows(t *testing.T) {
 		"delimiter_mode":   "delimiter",
 		"outputs":          map[string]interface{}{},
 	}
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: "user-migrate",
 		ID:           "kb-migrate",
 		TenantID:     "tenant-migrate",
 		Name:         "migration",
@@ -127,7 +127,7 @@ func TestMigrateGeneralChunkerParserConfigsUpdatesBuiltinRows(t *testing.T) {
 	if err := db.Create(kb).Error; err != nil {
 		t.Fatalf("create knowledgebase: %v", err)
 	}
-	doc := &entity.Document{
+	doc := &entity.Document{UserID: "user-migrate",
 		ID:           "doc-migrate",
 		KbID:         kb.ID,
 		ParserID:     "naive",
@@ -141,7 +141,7 @@ func TestMigrateGeneralChunkerParserConfigsUpdatesBuiltinRows(t *testing.T) {
 		t.Fatalf("create document: %v", err)
 	}
 	emptyPipelineID := ""
-	emptyPipelineKB := &entity.Knowledgebase{
+	emptyPipelineKB := &entity.Knowledgebase{UserID: "user-migrate",
 		ID:           "kb-empty-pipeline",
 		TenantID:     "tenant-migrate",
 		Name:         "empty-pipeline",
@@ -154,7 +154,7 @@ func TestMigrateGeneralChunkerParserConfigsUpdatesBuiltinRows(t *testing.T) {
 	if err := db.Create(emptyPipelineKB).Error; err != nil {
 		t.Fatalf("create empty-pipeline knowledgebase: %v", err)
 	}
-	emptyPipelineDoc := &entity.Document{
+	emptyPipelineDoc := &entity.Document{UserID: "user-migrate",
 		ID:           "doc-empty-pipeline",
 		KbID:         kb.ID,
 		ParserID:     "naive",
@@ -169,7 +169,7 @@ func TestMigrateGeneralChunkerParserConfigsUpdatesBuiltinRows(t *testing.T) {
 		t.Fatalf("create empty-pipeline document: %v", err)
 	}
 	customPipelineID := "canvas-migrate"
-	customKB := &entity.Knowledgebase{
+	customKB := &entity.Knowledgebase{UserID: "user-migrate",
 		ID:           "kb-custom",
 		TenantID:     "tenant-migrate",
 		Name:         "custom",

@@ -1,4 +1,4 @@
-//go:build !enterprise
+//go:build !ee
 
 package permission
 
@@ -28,7 +28,7 @@ func TestCommunityMCPQueryScopeFiltersBeforeListing(t *testing.T) {
 	if err := db.Create(&entity.UserTenant{ID: "member-membership", UserID: "member", TenantID: "tenant-1", Role: string(RoleNormal), Status: &status}).Error; err != nil {
 		t.Fatalf("create member membership: %v", err)
 	}
-	if err := db.Create(&entity.MCPServer{ID: "mcp-1", TenantID: "tenant-1", Name: "server", URL: "https://example.test", ServerType: "sse"}).Error; err != nil {
+	if err := db.Create(&entity.MCPServer{ID: "mcp-1", UserID: "owner", TenantID: "tenant-1", Name: "server", URL: "https://example.test", ServerType: "sse"}).Error; err != nil {
 		t.Fatalf("create MCP server: %v", err)
 	}
 

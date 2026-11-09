@@ -20,12 +20,12 @@ func TestPrepareCompletionKeepsActiveTenantIdentity(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("create tenant owner membership: %v", err)
 	}
-	if err := dao.DB.Create(&entity.Knowledgebase{
+	if err := dao.DB.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID: "kb-1", TenantID: "team-1", CreatedBy: "user-1", Name: "dataset", Permission: "team", Status: &status,
 	}).Error; err != nil {
 		t.Fatalf("create dataset: %v", err)
 	}
-	if err := dao.DB.Create(&entity.Search{
+	if err := dao.DB.Create(&entity.Search{UserID: "user-1",
 		ID: "search-1", TenantID: "team-1", CreatedBy: "user-1", Name: "search",
 		SearchConfig: entity.JSONMap{"kb_ids": []interface{}{"kb-1"}}, Status: &status,
 	}).Error; err != nil {

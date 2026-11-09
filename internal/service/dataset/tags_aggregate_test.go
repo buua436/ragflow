@@ -32,7 +32,7 @@ func insertAggregateTagsDoc(t *testing.T, docID, datasetID, tagFileID string) {
 			"tags": map[string]any{"tag_file_id": tagFileID, "top_n": 3},
 		}
 	}
-	doc := &entity.Document{
+	doc := &entity.Document{UserID: datasetID,
 		ID:           docID,
 		KbID:         datasetID,
 		Name:         sptr("doc-" + docID[:6]),
@@ -50,7 +50,7 @@ func insertAggregateTagsKB(t *testing.T, datasetID, tenantID, permission, tagFil
 	if tagFileID != "" {
 		parserConfig["tags"] = map[string]any{"tag_file_id": tagFileID}
 	}
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: tenantID,
 		ID:           datasetID,
 		TenantID:     tenantID,
 		Name:         "kb-" + datasetID[:6],

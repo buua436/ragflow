@@ -83,14 +83,14 @@ func TestCreateCommit_DeleteRecordsTombstoneWhenLiveFileIsGone(t *testing.T) {
 
 func seedLiveFile(t *testing.T, db *gorm.DB, id, parentID string) {
 	t.Helper()
-	if err := db.Create(&entity.File{ID: id, ParentID: parentID, TenantID: "t1", CreatedBy: "u1", Name: id + ".txt", Type: "file"}).Error; err != nil {
+	if err := db.Create(&entity.File{UserID: "u1", ID: id, ParentID: parentID, TenantID: "t1", CreatedBy: "u1", Name: id + ".txt", Type: "file"}).Error; err != nil {
 		t.Fatalf("seed file %s: %v", id, err)
 	}
 }
 
 func seedFolder(t *testing.T, db *gorm.DB, id, parentID string) {
 	t.Helper()
-	if err := db.Create(&entity.File{ID: id, ParentID: parentID, TenantID: "t1", CreatedBy: "u1", Name: id, Type: "folder"}).Error; err != nil {
+	if err := db.Create(&entity.File{UserID: "u1", ID: id, ParentID: parentID, TenantID: "t1", CreatedBy: "u1", Name: id, Type: "folder"}).Error; err != nil {
 		t.Fatalf("seed folder %s: %v", id, err)
 	}
 }

@@ -51,6 +51,43 @@ func TestDatasetServiceListDatasetsFiltersByIDs(t *testing.T) {
 	}
 }
 
+func TestDatasetServiceOwnerFilterUsesResourceUserID(t *testing.T) {
+	db := setupDatasetUpdateTestDB(t)
+	pushServiceDB(t, db)
+	insertDatasetUpdateKB(t, "kb-separate-owner", "tenant-uuid", "Separate owner")
+	if err := dao.DB.Model(&entity.Knowledgebase{}).
+		Where("id = ?", "kb-separate-owner").
+		Update("user_id", "resource-owner").Error; err != nil {
+		t.Fatalf("set resource owner: %v", err)
+	}
+	ensureDatasetTestMembership(t, "resource-owner", "tenant-uuid", "normal")
+
+	service := testDatasetListService(t)
+	ctx := withDatasetTestContext(t.Context(), "resource-owner", "tenant-uuid")
+	data, total, code, err := service.ListDatasets(ctx,
+		"", "", 1, 30, nil, "", []string{"resource-owner"}, "", nil, "",
+	)
+	if err != nil || code != common.CodeSuccess || total != 1 || len(data) != 1 || data[0]["id"] != "kb-separate-owner" {
+		t.Fatalf("ListDatasets by resource owner = (%#v, %d, %v), want the owned dataset", data, total, err)
+	}
+
+	data, total, code, err = service.ListDatasets(ctx,
+		"", "", 1, 30, nil, "", []string{"tenant-uuid"}, "", nil, "",
+	)
+	if err != nil || code != common.CodeSuccess || total != 0 || len(data) != 0 {
+		t.Fatalf("ListDatasets by tenant ID as owner = (%#v, %d, %v), want no rows", data, total, err)
+	}
+
+	filters, code, err := service.ListDatasetFilters(ctx, "")
+	if err != nil || code != common.CodeSuccess {
+		t.Fatalf("ListDatasetFilters = (%#v, %v, %v), want success", filters, code, err)
+	}
+	owners, ok := filters["filter"].(map[string]interface{})["owner"].([]*entity.DatasetOwnerFilter)
+	if !ok || len(owners) != 1 || owners[0].ID != "resource-owner" {
+		t.Fatalf("dataset owner filters = %#v, want resource-owner", filters["filter"])
+	}
+}
+
 func TestDatasetServiceListDatasetsIDsAccessibleViaTeamTenant(t *testing.T) {
 	db := setupDatasetUpdateTestDB(t)
 	pushServiceDB(t, db)
@@ -137,6 +174,7 @@ func TestDatasetServiceListDatasetsForCanvasUsesCallerOwnerIntersection(t *testi
 		UserID:     "owner-1",
 		Permission: string(entity.TenantPermissionTeam),
 		DSL:        entity.JSONMap{},
+		TenantID:   sptr("owner-1"),
 	}
 	if err := dao.DB.Create(&canvas).Error; err != nil {
 		t.Fatalf("create shared canvas: %v", err)
@@ -285,6 +323,7 @@ func TestDatasetServiceListDatasetsReturnsEmptyForAllInaccessibleIDs(t *testing.
 	db := setupDatasetUpdateTestDB(t)
 	pushServiceDB(t, db)
 	insertDatasetUpdateKB(t, "kb-private", "owner-1", "Private")
+	ensureDatasetTestMembership(t, "user-1", "user-1", "owner")
 
 	ctx := withDatasetTestContext(t.Context(), "user-1", "user-1")
 	data, total, code, err := testDatasetListService(t).ListDatasets(ctx,

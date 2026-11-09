@@ -12,6 +12,7 @@ import (
 	"ragflow/internal/common"
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 	"ragflow/internal/permission/testsupport"
 	"ragflow/internal/service"
 )
@@ -26,7 +27,7 @@ func setupChatHandlerTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to open sqlite: %v", err)
 	}
 
-	if err = db.AutoMigrate(&entity.Chat{}, &entity.Tenant{}, &entity.UserTenant{}); err != nil {
+	if err = db.AutoMigrate(&entity.Chat{}, &entity.Tenant{}, &entity.UserTenant{}, &entity.User{}); err != nil {
 		t.Fatalf("failed to migrate test schema: %v", err)
 	}
 
@@ -62,6 +63,7 @@ func createChatHandlerTestChat(t *testing.T, db *gorm.DB, id, tenantID string) {
 	status := string(entity.StatusValid)
 	chat := &entity.Chat{
 		ID:           id,
+		UserID:       tenantID,
 		TenantID:     tenantID,
 		Name:         &name,
 		LLMID:        "model-a",
@@ -235,6 +237,74 @@ func TestGetChatHandlerRejectsNonOwner(t *testing.T) {
 	}
 	if resp["message"] != "Resource not found" {
 		t.Fatalf("unexpected message: %v", resp["message"])
+	}
+}
+
+func TestListChatsHandlerUsesSelectedTenantWithSeparateUserID(t *testing.T) {
+	db := setupChatHandlerTestDB(t)
+	active := string(entity.StatusValid)
+	if err := db.Create(&entity.Tenant{ID: "team-1", ParserIDs: "naive", Status: &active}).Error; err != nil {
+		t.Fatalf("create selected tenant: %v", err)
+	}
+	if err := db.Create(&entity.UserTenant{
+		ID: "user-1-team-1", UserID: "user-1", TenantID: "team-1", Role: "normal", Status: &active,
+	}).Error; err != nil {
+		t.Fatalf("create selected tenant membership: %v", err)
+	}
+	if err := db.Create(&entity.UserTenant{
+		ID: "user-2-team-1", UserID: "user-2", TenantID: "team-1", Role: string(permission.RoleOwner), Status: &active,
+	}).Error; err != nil {
+		t.Fatalf("create selected tenant owner membership: %v", err)
+	}
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "team-1", "user-2", "user-1"); err != nil {
+		t.Fatalf("prepare selected tenant permission fixture: %v", err)
+	}
+	seedChat := func(id, userID, tenantID string) {
+		t.Helper()
+		name := "chat-" + id
+		status := string(entity.StatusValid)
+		if err := db.Create(&entity.Chat{
+			ID: id, UserID: userID, TenantID: tenantID, Name: &name, LLMID: "model-a",
+			LLMSetting: entity.JSONMap{}, PromptType: "simple", PromptConfig: entity.JSONMap{},
+			KBIDs: entity.JSONSlice{}, Status: &status,
+		}).Error; err != nil {
+			t.Fatalf("create chat %q: %v", id, err)
+		}
+	}
+	seedChat("selected-owned", "user-1", "team-1")
+	seedChat("selected-other-owner", "user-2", "team-1")
+	seedChat("personal-owned", "user-1", "user-1")
+	chatCtx := permission.WithIdentity(t.Context(), "user-1", "team-1")
+	chatRef := permission.ResourceRef{Kind: permission.ResourceKindChat, ID: "selected-owned"}
+	checker := permission.NewDatabaseChecker(db)
+	if err := checker.GrantResourceOwner(chatCtx, chatRef); err != nil {
+		t.Fatalf("grant selected chat owner: %v", err)
+	}
+	if err := checker.CheckResource(chatCtx, chatRef, permission.OperationRead); err != nil {
+		t.Fatalf("selected chat owner cannot read their chat: %v", err)
+	}
+
+	h := NewChatHandler(service.NewChatService(), service.NewUserService())
+	c, w := setupGinContextWithUserInTenant(http.MethodGet, "/api/v1/chats", "", "user-1", "team-1")
+	h.ListChats(c)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Code common.ErrorCode `json:"code"`
+		Data struct {
+			Total int64 `json:"total"`
+			Chats []struct {
+				ID string `json:"id"`
+			} `json:"chats"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if response.Code != common.CodeSuccess || response.Data.Total != 1 || len(response.Data.Chats) != 1 || response.Data.Chats[0].ID != "selected-owned" {
+		t.Fatalf("list response = %+v, want only the selected tenant's resource owned by user-1", response)
 	}
 }
 

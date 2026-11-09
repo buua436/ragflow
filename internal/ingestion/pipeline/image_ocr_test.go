@@ -37,6 +37,7 @@ import (
 	"ragflow/internal/ingestion/component"
 	"ragflow/internal/ingestion/component/chunker"
 	"ragflow/internal/ingestion/component/schema"
+	"ragflow/internal/permission"
 )
 
 type imageOCREmbedder struct{ texts []string }
@@ -118,9 +119,11 @@ func TestImageOCRSavedConfigToSearchableChunk(t *testing.T) {
 		"image":                     map[string]any{"ocr_enabled": true, "ocr_model_id": "ocr-model"},
 		"enable_vision_enhancement": false,
 	}})
+	joined := string(entity.StatusValid)
 	for _, row := range []any{
-		&entity.Knowledgebase{ID: "kb-1", TenantID: "tenant-1", Name: "Image OCR fixture", ParserConfig: config},
-		&entity.TenantModelProvider{ID: "ocr-provider", UserID: "tenant-1", TenantID: "tenant-1", ProviderName: "PaddleOCR.local"},
+		&entity.UserTenant{ID: "tenant-owner-membership", UserID: "tenant-owner", TenantID: "tenant-1", Role: "owner", Status: &joined},
+		&entity.Knowledgebase{UserID: "tenant-owner", ID: "kb-1", TenantID: "tenant-1", Name: "Image OCR fixture", ParserConfig: config},
+		&entity.TenantModelProvider{ID: "ocr-provider", UserID: "tenant-owner", TenantID: "tenant-1", ProviderName: "PaddleOCR.local"},
 		&entity.TenantModelInstance{ID: "ocr-instance", ProviderID: "ocr-provider", InstanceName: "selected",
 			Status: "active", APIKey: "fixture-key", Extra: fmt.Sprintf(`{"base_url":%q}`, server.URL)},
 		&entity.TenantModel{ID: "ocr-model", ProviderID: "ocr-provider", InstanceID: "ocr-instance",
@@ -142,9 +145,10 @@ func TestImageOCRSavedConfigToSearchableChunk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx := permission.WithIdentity(t.Context(), "tenant-owner", "tenant-1")
 	inputs := map[string]any{"name": "invoice.png", "file_type": "image", "binary": imageBytes.Bytes(),
 		"tenant_id": "tenant-1", "kb_id": "kb-1", "doc_id": "doc-1"}
-	parsed, err := parserComponent.Invoke(t.Context(), db, inputs)
+	parsed, err := parserComponent.Invoke(ctx, db, inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +178,7 @@ func TestImageOCRSavedConfigToSearchableChunk(t *testing.T) {
 	for key, value := range parsed {
 		inputs[key] = value
 	}
-	chunked, err := chunkComponent.Invoke(t.Context(), db, inputs)
+	chunked, err := chunkComponent.Invoke(ctx, db, inputs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +194,7 @@ func TestImageOCRSavedConfigToSearchableChunk(t *testing.T) {
 	for key, value := range chunked {
 		inputs[key] = value
 	}
-	indexable, err := tokenizer.Invoke(t.Context(), db, inputs)
+	indexable, err := tokenizer.Invoke(ctx, db, inputs)
 	if err != nil {
 		t.Fatal(err)
 	}

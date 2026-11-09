@@ -267,7 +267,7 @@ func TestParseReturnsServerErrorWhenDocumentsQueryFails(t *testing.T) {
 	queryErr := errors.New("documents query failed")
 	svc.checkDatasetAccessFunc = func(string) error { return nil }
 	svc.getKnowledgebaseByIDFunc = func(string) (*entity.Knowledgebase, error) {
-		return &entity.Knowledgebase{ID: "kb-1", TenantID: "user-1"}, nil
+		return &entity.Knowledgebase{UserID: "user-1", ID: "kb-1", TenantID: "user-1"}, nil
 	}
 	svc.getDocumentsByIDsFunc = func([]string) ([]*entity.Document, error) {
 		return nil, queryErr
@@ -1159,7 +1159,7 @@ func TestAddChunkSuccess(t *testing.T) {
 			return permission.ErrPermissionDenied
 		},
 		getKnowledgebaseByIDFunc: func(id string) (*entity.Knowledgebase, error) {
-			return &entity.Knowledgebase{ID: id, TenantID: userID, EmbdID: "embed-1", Language: &language, Pagerank: 7}, nil
+			return &entity.Knowledgebase{UserID: userID, ID: id, TenantID: userID, EmbdID: "embed-1", Language: &language, Pagerank: 7}, nil
 		},
 		getEmbeddingModelFunc: func(string, string) (*models.EmbeddingModel, error) {
 			driver := &stubEmbeddingDriver{
@@ -1313,7 +1313,7 @@ func TestAddChunkPersistsTagKwdOnlyWhenProvided(t *testing.T) {
 				return nil
 			},
 			getKnowledgebaseByIDFunc: func(id string) (*entity.Knowledgebase, error) {
-				return &entity.Knowledgebase{ID: id, TenantID: userID, EmbdID: "embed-1"}, nil
+				return &entity.Knowledgebase{UserID: userID, ID: id, TenantID: userID, EmbdID: "embed-1"}, nil
 			},
 			getEmbeddingModelFunc: func(string, string) (*models.EmbeddingModel, error) {
 				driver := &stubEmbeddingDriver{
@@ -1436,7 +1436,7 @@ func TestAddChunkValidationErrors(t *testing.T) {
 			setup: func(svc *ChunkService) {
 				svc.checkDatasetAccessFunc = func(string) error { return nil }
 				svc.getKnowledgebaseByIDFunc = func(string) (*entity.Knowledgebase, error) {
-					return &entity.Knowledgebase{ID: "kb-1", TenantID: "user-1", EmbdID: "embed-1"}, nil
+					return &entity.Knowledgebase{UserID: "user-1", ID: "kb-1", TenantID: "user-1", EmbdID: "embed-1"}, nil
 				}
 			},
 			wantMsg: "`content` is required",
@@ -1471,7 +1471,7 @@ func TestAddChunkImageAndTagFeatureValidation(t *testing.T) {
 		documentDAO:            dao.NewDocumentDAO(),
 		checkDatasetAccessFunc: func(string) error { return nil },
 		getKnowledgebaseByIDFunc: func(id string) (*entity.Knowledgebase, error) {
-			return &entity.Knowledgebase{ID: id, TenantID: userID, EmbdID: "embed-1"}, nil
+			return &entity.Knowledgebase{UserID: userID, ID: id, TenantID: userID, EmbdID: "embed-1"}, nil
 		},
 		tokenizeFunc:            func(text, _ string) (string, error) { return text, nil },
 		fineGrainedTokenizeFunc: func(text, _ string) (string, error) { return text + "_fg", nil },
@@ -1555,7 +1555,7 @@ func TestAddChunkIncrementsStatsAfterInsert(t *testing.T) {
 		documentDAO:            dao.NewDocumentDAO(),
 		checkDatasetAccessFunc: func(string) error { return nil },
 		getKnowledgebaseByIDFunc: func(id string) (*entity.Knowledgebase, error) {
-			return &entity.Knowledgebase{ID: id, TenantID: userID, EmbdID: "embed-1"}, nil
+			return &entity.Knowledgebase{UserID: userID, ID: id, TenantID: userID, EmbdID: "embed-1"}, nil
 		},
 		getEmbeddingModelFunc: func(string, string) (*models.EmbeddingModel, error) {
 			driver := &stubEmbeddingDriver{
@@ -2002,7 +2002,14 @@ func pushChunkTestDB(t *testing.T, testDB *gorm.DB) {
 func chunkTestContext(t *testing.T, userID, tenantID string, memberIDs ...string) context.Context {
 	t.Helper()
 	members := append([]string{userID}, memberIDs...)
-	if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, tenantID, members...); err != nil {
+	ownerUserID := userID
+	var owner entity.UserTenant
+	if err := dao.DB.Where("tenant_id = ? AND role = ? AND status = ?", tenantID, string(permission.RoleOwner), entity.TenantMembershipStatusJoined).Take(&owner).Error; err == nil {
+		ownerUserID = owner.UserID
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Fatalf("load test tenant owner: %v", err)
+	}
+	if err := testsupport.PrepareEnterprisePermissionFixture(dao.DB, tenantID, ownerUserID, members...); err != nil {
 		t.Fatalf("prepare permission fixture: %v", err)
 	}
 	return permission.WithIdentity(t.Context(), userID, tenantID)
@@ -2051,7 +2058,7 @@ func insertChunkTestKB(t *testing.T, id, tenantID string) {
 	}
 
 	status := string(entity.StatusValid)
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: tenantID,
 		ID:           id,
 		TenantID:     tenantID,
 		Name:         id,
@@ -2072,7 +2079,7 @@ func insertChunkTestDoc(t *testing.T, id, kbID string) {
 	location := id + ".txt"
 	name := id + ".txt"
 	status := string(entity.StatusValid)
-	doc := &entity.Document{
+	doc := &entity.Document{UserID: "user-1",
 		ID:           id,
 		KbID:         kbID,
 		ParserID:     string(entity.ParserTypeNaive),
@@ -2510,7 +2517,7 @@ func TestSwitchChunksUpdatesDocEngineWithAvailableInt(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("failed to create user_tenant: %v", err)
 	}
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-1",
 		ID:           "kb-1",
 		TenantID:     "tenant-1",
 		Name:         "dataset",
@@ -2523,7 +2530,7 @@ func TestSwitchChunksUpdatesDocEngineWithAvailableInt(t *testing.T) {
 	}).Error; err != nil {
 		t.Fatalf("failed to create knowledgebase: %v", err)
 	}
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: "user-1",
 		ID:           "doc-1",
 		KbID:         "kb-1",
 		ParserID:     string(entity.ParserTypeNaive),

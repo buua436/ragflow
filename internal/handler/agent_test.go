@@ -99,9 +99,10 @@ func TestListAgentVersionsHandler_Success(t *testing.T) {
 
 	// Insert canvas owned by user-1
 	db.Create(&entity.UserCanvas{
-		ID:     "canvas-1",
-		UserID: "user-1",
-		Title:  sptr("Test Agent"),
+		ID:       "canvas-1",
+		UserID:   "user-1",
+		Title:    sptr("Test Agent"),
+		TenantID: sptr("user-1"),
 	})
 
 	// Insert 2 versions with staggered timestamps
@@ -235,9 +236,10 @@ func TestGetAgentVersionHandler_Success(t *testing.T) {
 	c.Params = gin.Params{{Key: "canvas_id", Value: "canvas-1"}, {Key: "version_id", Value: "v1"}}
 
 	db.Create(&entity.UserCanvas{
-		ID:     "canvas-1",
-		UserID: "user-1",
-		Title:  sptr("Test Agent"),
+		ID:       "canvas-1",
+		UserID:   "user-1",
+		Title:    sptr("Test Agent"),
+		TenantID: sptr("user-1"),
 	})
 	db.Create(&entity.UserCanvasVersion{
 		ID:           "v1",
@@ -310,9 +312,10 @@ func TestGetAgentVersionHandler_VersionNotFound(t *testing.T) {
 	c.Params = gin.Params{{Key: "canvas_id", Value: "canvas-1"}, {Key: "version_id", Value: "non-existent"}}
 
 	db.Create(&entity.UserCanvas{
-		ID:     "canvas-1",
-		UserID: "user-1",
-		Title:  sptr("Test Agent"),
+		ID:       "canvas-1",
+		UserID:   "user-1",
+		Title:    sptr("Test Agent"),
+		TenantID: sptr("user-1"),
 	})
 
 	ctx := t.Context()
@@ -351,7 +354,7 @@ func TestCreateAgentUsesAuthenticatedUserID(t *testing.T) {
 	if created.UserID != "user-1" {
 		t.Fatalf("created agent owner = %q, want authenticated user user-1", created.UserID)
 	}
-	if created.EffectiveTenantID() == "" {
+	if created.TenantID == nil || strings.TrimSpace(*created.TenantID) == "" {
 		t.Fatal("created agent has no tenant_id")
 	}
 }

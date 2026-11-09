@@ -411,7 +411,7 @@ func mustSeedRealPipelineDocument(
 	}).Error; err != nil {
 		t.Fatalf("create tenant owner membership: %v", err)
 	}
-	if err := db.Create(&entity.Knowledgebase{
+	if err := db.Create(&entity.Knowledgebase{UserID: tenantID,
 		ID:           kbID,
 		TenantID:     tenantID,
 		EmbdID:       "embd-1",
@@ -423,7 +423,7 @@ func mustSeedRealPipelineDocument(
 	if err := stg.Put(t.Context(), bucket, objectPath, []byte(content)); err != nil {
 		t.Fatalf("put real minio object: %v", err)
 	}
-	if err := db.Create(&entity.File{
+	if err := db.Create(&entity.File{UserID: tenantID,
 		ID:         fileID,
 		ParentID:   bucket,
 		TenantID:   tenantID,
@@ -435,7 +435,7 @@ func mustSeedRealPipelineDocument(
 	}).Error; err != nil {
 		t.Fatalf("create file: %v", err)
 	}
-	if err := db.Create(&entity.Document{
+	if err := db.Create(&entity.Document{UserID: tenantID,
 		ID:           docID,
 		KbID:         kbID,
 		ParserID:     "naive",

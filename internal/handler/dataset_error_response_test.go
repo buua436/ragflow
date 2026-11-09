@@ -116,6 +116,19 @@ func TestCreateDatasetMissingNameOmitsData(t *testing.T) {
 		`{"parser_config":{}}`, common.CodeDataError)
 }
 
+func TestCreateDatasetRequiresTenantContextInsteadOfUsingUserID(t *testing.T) {
+	r := newDatasetErrorResponseRouter(http.MethodPost, "/api/v1/datasets", func(c *gin.Context) {
+		h := &DatasetsHandler{}
+		h.CreateDataset(c)
+	})
+
+	body := assertDatasetErrorBodyOmitsData(t, r, http.MethodPost, "/api/v1/datasets",
+		`{"name":"kb"}`, common.CodeForbidden)
+	if body["message"] != "Permission denied" {
+		t.Fatalf("message=%v, want normalized tenant-context error", body["message"])
+	}
+}
+
 func TestUpdateDatasetRespondsExactlyOnceOnMalformedRequest(t *testing.T) {
 	r := newDatasetErrorResponseRouter(http.MethodPut, "/api/v1/datasets/:dataset_id", func(c *gin.Context) {
 		h := &DatasetsHandler{}

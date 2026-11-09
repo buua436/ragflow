@@ -35,13 +35,14 @@ import (
 	"ragflow/internal/entity"
 	modelModule "ragflow/internal/entity/models"
 	"ragflow/internal/permission"
+	"ragflow/internal/permission/testsupport"
 )
 
 // dialForTest builds a minimal *entity.Chat suitable for the
 // guard-clause tests. KBs are empty so AsyncChat goes through
 // AsyncChatSolo.
 func dialForTest(llmid string) *entity.Chat {
-	return &entity.Chat{
+	return &entity.Chat{UserID: "tenant-1",
 		ID:       "chat-1",
 		TenantID: "tenant-1",
 		LLMID:    llmid,
@@ -1741,7 +1742,7 @@ func TestAsyncChatEmptyResponseQuoteDisabled(t *testing.T) {
 	if err := db.AutoMigrate(&entity.Knowledgebase{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.Create(&entity.Knowledgebase{ID: "kb-1", TenantID: "tenant-1", CreatedBy: "user-1", Name: "Knowledge"}).Error; err != nil {
+	if err := db.Create(&entity.Knowledgebase{UserID: "user-1", ID: "kb-1", TenantID: "tenant-1", CreatedBy: "user-1", Name: "Knowledge"}).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -1879,6 +1880,9 @@ func setupChatPipelineToolSupportTestDB(t *testing.T) *gorm.DB {
 			t.Fatalf("failed to seed %T: %v", row, err)
 		}
 	}
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "user-1"); err != nil {
+		t.Fatalf("prepare model permission fixture: %v", err)
+	}
 	return db
 }
 
@@ -1922,7 +1926,8 @@ func TestGetLLMModelConfigCarriesToolSupport(t *testing.T) {
 		{"model without tool support", "model-tools-off", false, "chat"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, _, _, _, err := svc.getLLMModelConfig(t.Context(), &entity.Chat{TenantID: "tenant-1", LLMID: tc.llm})
+			ctx := permission.WithIdentity(t.Context(), "user-1", "tenant-1")
+			cfg, _, _, _, err := svc.getLLMModelConfig(ctx, &entity.Chat{UserID: "user-1", TenantID: "tenant-1", LLMID: tc.llm})
 			if err != nil {
 				t.Fatalf("getLLMModelConfig(%s) failed: %v", tc.llm, err)
 			}
@@ -1943,7 +1948,7 @@ func TestResolveModelConfigRejectsImage2TextOnlyModel(t *testing.T) {
 	svc := NewChatPipelineService()
 
 	_, err := svc.ModelFactory.resolveConfig(
-		permission.WithTenantID(t.Context(), "tenant-1"), entity.ModelTypeChat, "model-image2text-tools",
+		permission.WithIdentity(t.Context(), "user-1", "tenant-1"), entity.ModelTypeChat, "model-image2text-tools",
 	)
 	if err == nil {
 		t.Fatal("ResolveModelConfig accepted an image2text-only model as chat")
@@ -1969,7 +1974,8 @@ func TestGetLLMModelConfigRejectsUnusableModels(t *testing.T) {
 		{"unenrolled composite reference", "ghost@default@ZHIPU-AI"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg, _, _, _, err := svc.getLLMModelConfig(t.Context(), &entity.Chat{TenantID: "tenant-1", LLMID: tc.llm})
+			ctx := permission.WithIdentity(t.Context(), "user-1", "tenant-1")
+			cfg, _, _, _, err := svc.getLLMModelConfig(ctx, &entity.Chat{UserID: "user-1", TenantID: "tenant-1", LLMID: tc.llm})
 			if err == nil && configTools(cfg) {
 				t.Errorf("unusable model %s reported tool support", tc.llm)
 			}
@@ -1985,7 +1991,8 @@ func TestGetLLMModelConfigFallsBackToTenantDefault(t *testing.T) {
 	seedChatPipelineToolSupportTenant(t, db, "glm-4-plus@ZHIPU-AI")
 	svc := NewChatPipelineService()
 
-	cfg, _, _, _, err := svc.getLLMModelConfig(t.Context(), &entity.Chat{TenantID: "tenant-1"})
+	ctx := permission.WithIdentity(t.Context(), "user-1", "tenant-1")
+	cfg, _, _, _, err := svc.getLLMModelConfig(ctx, &entity.Chat{UserID: "user-1", TenantID: "tenant-1"})
 	if err != nil {
 		t.Fatalf("getLLMModelConfig(tenant default) failed: %v", err)
 	}
@@ -2001,7 +2008,8 @@ func TestGetLLMModelConfigTenantDefaultWithoutToolSupport(t *testing.T) {
 	seedChatPipelineToolSupportTenant(t, db, "glm-4-flash@ZHIPU-AI")
 	svc := NewChatPipelineService()
 
-	cfg, _, _, _, err := svc.getLLMModelConfig(t.Context(), &entity.Chat{TenantID: "tenant-1"})
+	ctx := permission.WithIdentity(t.Context(), "user-1", "tenant-1")
+	cfg, _, _, _, err := svc.getLLMModelConfig(ctx, &entity.Chat{UserID: "user-1", TenantID: "tenant-1"})
 	if err != nil {
 		t.Fatalf("getLLMModelConfig(tenant default) failed: %v", err)
 	}
@@ -2133,9 +2141,10 @@ func TestAgenticDispatchRequiresKnowledgeBaseScope(t *testing.T) {
 func TestGetLLMModelConfigReadsToolSupportPerResolution(t *testing.T) {
 	db := setupChatPipelineToolSupportTestDB(t)
 	svc := NewChatPipelineService()
-	chat := &entity.Chat{TenantID: "tenant-1", LLMID: "model-tools-on"}
+	chat := &entity.Chat{UserID: "user-1", TenantID: "tenant-1", LLMID: "model-tools-on"}
 
-	cfg, _, _, _, err := svc.getLLMModelConfig(t.Context(), chat)
+	ctx := permission.WithIdentity(t.Context(), chat.UserID, chat.TenantID)
+	cfg, _, _, _, err := svc.getLLMModelConfig(ctx, chat)
 	if err != nil {
 		t.Fatalf("getLLMModelConfig failed: %v", err)
 	}
@@ -2148,7 +2157,7 @@ func TestGetLLMModelConfigReadsToolSupportPerResolution(t *testing.T) {
 		t.Fatalf("flip is_tools: %v", err)
 	}
 
-	cfg, _, _, _, err = svc.getLLMModelConfig(t.Context(), chat)
+	cfg, _, _, _, err = svc.getLLMModelConfig(ctx, chat)
 	if err != nil {
 		t.Fatalf("getLLMModelConfig after the flag flip failed: %v", err)
 	}

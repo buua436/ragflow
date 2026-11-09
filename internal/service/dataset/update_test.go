@@ -1073,7 +1073,7 @@ func testDatasetUpdateService(t *testing.T) *DatasetService {
 func insertDatasetUpdateKB(t *testing.T, id, tenantID, name string) {
 	t.Helper()
 
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: tenantID,
 		ID:           id,
 		TenantID:     tenantID,
 		Name:         name,
@@ -1093,9 +1093,10 @@ func insertDatasetUpdateKB(t *testing.T, id, tenantID, name string) {
 func insertDatasetUpdateCanvas(t *testing.T, id, userID string) {
 	t.Helper()
 	canvas := &entity.UserCanvas{
-		ID:     id,
-		UserID: userID,
-		DSL:    entity.JSONMap{},
+		ID:       id,
+		UserID:   userID,
+		DSL:      entity.JSONMap{},
+		TenantID: sptr(userID),
 	}
 	if err := dao.DB.Create(canvas).Error; err != nil {
 		t.Fatalf("insert test agent: %v", err)
@@ -1110,7 +1111,7 @@ func insertDatasetUpdateTeamMember(t *testing.T, userID, tenantID string) {
 func insertDatasetUpdateConnector(t *testing.T, id, tenantID string) {
 	t.Helper()
 
-	connector := &entity.Connector{
+	connector := &entity.Connector{UserID: tenantID,
 		ID:        id,
 		TenantID:  tenantID,
 		Name:      "Test Connector",
@@ -1185,6 +1186,7 @@ func seedDatasetUpdateCanvas(t *testing.T, id, userID string, dslJSON []byte) {
 		Permission:     "me",
 		CanvasCategory: "agent_canvas",
 		DSL:            entity.JSONMap(dslMap),
+		TenantID:       sptr(userID),
 	}
 	if err := dao.DB.Create(canvas).Error; err != nil {
 		t.Fatalf("seed agent: %v", err)
@@ -1217,7 +1219,7 @@ func insertDatasetUpdateCanvasKB(t *testing.T, id, tenantID, name, pipelineID st
 	t.Helper()
 
 	pid := pipelineID
-	kb := &entity.Knowledgebase{
+	kb := &entity.Knowledgebase{UserID: tenantID,
 		ID:           id,
 		TenantID:     tenantID,
 		Name:         name,

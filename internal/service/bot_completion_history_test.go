@@ -164,6 +164,7 @@ func TestBotService_AgentbotInputs_CrossTenantDenied(t *testing.T) {
 		UserID:         "user-A",
 		Title:          sptr("Victim Agent"),
 		CanvasCategory: "agent_canvas",
+		TenantID:       sptr("user-A"),
 	}).Error; err != nil {
 		t.Fatalf("seed victim agent: %v", err)
 	}
@@ -400,7 +401,7 @@ func TestBotService_ChatbotCompletion_NewSessionSkipsLLM(t *testing.T) {
 	pushServiceDB(t, db)
 
 	prologue := "你好！我是你的AI助手。"
-	if err := db.Create(&entity.Chat{
+	if err := db.Create(&entity.Chat{UserID: "tenant-1",
 		ID:           "dlg-1",
 		TenantID:     "tenant-1",
 		Name:         sptr("bot"),

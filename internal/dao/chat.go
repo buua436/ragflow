@@ -35,26 +35,28 @@ func NewChatDAO() *ChatDAO {
 	return &ChatDAO{}
 }
 
-// ListByResourceIDs lists chats that have already been authorized by the
-// permission layer, with the same filters and pagination as the chat list API.
-func (dao *ChatDAO) ListByResourceIDs(ctx context.Context, db *gorm.DB, resourceIDs, ownerIDs []string, page, pageSize int, terms []OrderTerm, keywords, id, name string) ([]*entity.ChatListItem, int64, error) {
-	if len(resourceIDs) == 0 || (ownerIDs != nil && len(ownerIDs) == 0) {
-		return []*entity.ChatListItem{}, 0, nil
+// ListIDs returns row IDs from an already-scoped chat query.
+func (dao *ChatDAO) ListIDs(ctx context.Context, query *gorm.DB) ([]string, error) {
+	if query == nil {
+		return nil, fmt.Errorf("chat ID query is nil")
 	}
+	ids := make([]string, 0)
+	err := query.WithContext(ctx).Model(&entity.Chat{}).Pluck("dialog.id", &ids).Error
+	return ids, err
+}
 
+// List chats from a query already constrained by the caller.
+func (dao *ChatDAO) List(ctx context.Context, query *gorm.DB, page, pageSize int, terms []OrderTerm, keywords, id, name string) ([]*entity.ChatListItem, int64, error) {
 	var chats []*entity.ChatListItem
 	var total int64
-	query := db.WithContext(ctx).Model(&entity.Chat{}).
+	query = query.WithContext(ctx).
 		Select(`
 			dialog.*,
 			user.nickname,
 			user.avatar as tenant_avatar
 		`).
-		Joins("LEFT JOIN user ON dialog.tenant_id = user.id").
-		Where("dialog.id IN ? AND dialog.status = ?", resourceIDs, "1")
-	if ownerIDs != nil {
-		query = query.Where("dialog.tenant_id IN ?", ownerIDs)
-	}
+		Joins("LEFT JOIN user ON dialog.user_id = user.id").
+		Where("dialog.status = ?", "1")
 	if keywords != "" {
 		query = query.Where("LOWER(dialog.name) LIKE ?", "%"+strings.ToLower(keywords)+"%")
 	}
