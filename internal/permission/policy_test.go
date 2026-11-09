@@ -13,10 +13,11 @@ import (
 )
 
 type permissionTestSource struct {
-	memberships map[string]*Membership
-	resources   map[ResourceRef]Resource
-	candidates  []ResourceRef
-	queryTenant string
+	memberships   map[string]*Membership
+	resources     map[ResourceRef]Resource
+	candidates    []ResourceRef
+	queryTenant   string
+	resourceLoads int
 }
 
 func (s *permissionTestSource) GetMembership(_ context.Context, userID, tenantID string) (*Membership, error) {
@@ -24,6 +25,7 @@ func (s *permissionTestSource) GetMembership(_ context.Context, userID, tenantID
 }
 
 func (s *permissionTestSource) GetResources(_ context.Context, refs []ResourceRef) ([]Resource, error) {
+	s.resourceLoads++
 	resources := make([]Resource, 0, len(refs))
 	for _, ref := range refs {
 		if resource, ok := s.resources[ref]; ok {
@@ -221,6 +223,30 @@ func TestCommunityPolicyChecksDependencyForBothUserAndEntryOwner(t *testing.T) {
 	err = NewChecker(source).CheckDependency(WithIdentity(context.Background(), "caller", ""), entryRef, dependencyRef, OperationRun, OperationRead)
 	if err != nil {
 		t.Fatalf("CheckDependency() error = %v, want nil when both caller and entry owner can read dependency", err)
+	}
+}
+
+func TestCommunityPolicyReusesDependencyFacts(t *testing.T) {
+	entryRef := ResourceRef{Kind: "agent", ID: "agent-1"}
+	dependencyRef := ResourceRef{Kind: "dataset", ID: "dataset-1"}
+	source := &permissionTestSource{
+		resources: map[ResourceRef]Resource{
+			entryRef: {
+				Ref: entryRef, TenantID: "tenant-1", OwnerUserID: "caller",
+				Visibility: VisibilityTenant, OwnerOperations: []Operation{OperationRun}, Active: true,
+			},
+			dependencyRef: {
+				Ref: dependencyRef, TenantID: "tenant-1", OwnerUserID: "caller",
+				Visibility: VisibilityTenant, OwnerOperations: []Operation{OperationRead}, Active: true,
+			},
+		},
+	}
+
+	if err := NewChecker(source).CheckDependency(WithIdentity(context.Background(), "caller", "tenant-1"), entryRef, dependencyRef, OperationRun, OperationRead); err != nil {
+		t.Fatalf("CheckDependency() error = %v, want nil", err)
+	}
+	if source.resourceLoads != 1 {
+		t.Fatalf("GetResources calls = %d, want one batch load for both resources", source.resourceLoads)
 	}
 }
 

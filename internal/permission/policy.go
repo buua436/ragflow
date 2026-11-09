@@ -50,6 +50,55 @@ func newPolicy(source Source) policy {
 	return &communityPolicy{source: source}
 }
 
+func checkResource(ctx context.Context, resolve func(context.Context, ResourceRef) (Access, error), ref ResourceRef, operation Operation) error {
+	if strings.TrimSpace(UserIDFromContext(ctx)) == "" {
+		return ErrUnauthenticated
+	}
+	if !validOperation(operation) {
+		return ErrInvalidPermission
+	}
+	access, err := resolve(ctx, ref)
+	if err != nil {
+		return err
+	}
+	if !access.Allows(operation) {
+		return ErrPermissionDenied
+	}
+	return nil
+}
+
+func checkDependency(ctx context.Context, session accessSession, entry, dependency ResourceRef, entryOperation, dependencyOperation Operation) error {
+	if strings.TrimSpace(UserIDFromContext(ctx)) == "" {
+		return ErrUnauthenticated
+	}
+	if !validOperation(entryOperation) || !validOperation(dependencyOperation) {
+		return ErrInvalidPermission
+	}
+	if session.load != nil {
+		if err := session.load(ctx, []ResourceRef{entry, dependency}); err != nil {
+			return err
+		}
+	}
+	if err := checkResource(ctx, session.resolve, entry, entryOperation); err != nil {
+		return err
+	}
+	if err := checkResource(ctx, session.resolve, dependency, dependencyOperation); err != nil {
+		return err
+	}
+	entryOwnerID, err := session.ownerID(ctx, entry)
+	if err != nil {
+		return err
+	}
+	ownerContext := WithIdentity(ctx, entryOwnerID, TenantIDFromContext(ctx))
+	if err := checkResource(ownerContext, session.resolve, dependency, dependencyOperation); err != nil {
+		if errors.Is(err, ErrPermissionDenied) || errors.Is(err, ErrMembershipNotFound) || errors.Is(err, ErrResourceNotFound) {
+			return ErrPermissionDenied
+		}
+		return err
+	}
+	return nil
+}
+
 func (p *communityPolicy) nativeQueryScopeRequired() bool {
 	source, ok := p.source.(*databaseSource)
 	return ok && source != nil && source.db != nil
@@ -70,26 +119,29 @@ func (p *communityPolicy) CheckTenant(ctx context.Context, tenantID string, requ
 	return newEvaluation(p.source).checkTenant(ctx, tenantID, requirement)
 }
 
-func (p *communityPolicy) CheckResource(ctx context.Context, ref ResourceRef, operation Operation) error {
-	if strings.TrimSpace(UserIDFromContext(ctx)) == "" {
-		return ErrUnauthenticated
-	}
-	return newEvaluation(p.source).checkResource(ctx, ref, operation)
-}
-
-func (p *communityPolicy) CheckDependency(ctx context.Context, entryRef, dependencyRef ResourceRef, entryOperation, dependencyOperation Operation) error {
-	if strings.TrimSpace(UserIDFromContext(ctx)) == "" {
-		return ErrUnauthenticated
-	}
-	if !validOperation(entryOperation) || !validOperation(dependencyOperation) {
-		return ErrInvalidPermission
-	}
-	evaluation := newEvaluation(p.source)
-	return evaluation.checkDependency(ctx, entryRef, dependencyRef, entryOperation, dependencyOperation)
-}
-
 func (p *communityPolicy) ResolveAccess(ctx context.Context, ref ResourceRef) (Access, error) {
 	return newEvaluation(p.source).resolveAccess(ctx, ref)
+}
+
+func (p *communityPolicy) newAccessSession() accessSession {
+	evaluation := newEvaluation(p.source)
+	return accessSession{resolve: evaluation.resolveAccess, ownerID: evaluation.resourceOwnerID, load: evaluation.loadResources}
+}
+
+func (p *communityPolicy) resourceOwnerID(ctx context.Context, ref ResourceRef) (string, error) {
+	if p.source == nil {
+		return "", ErrSourceUnavailable
+	}
+	resources, err := p.source.GetResources(ctx, []ResourceRef{ref})
+	if err != nil {
+		return "", fmt.Errorf("permission: load dependency owner: %w", err)
+	}
+	for _, resource := range resources {
+		if resource.Ref == ref {
+			return resource.OwnerUserID, nil
+		}
+	}
+	return "", ErrResourceNotFound
 }
 
 func (p *communityPolicy) scope(ctx context.Context, query ScopeQuery) (resourceScope, error) {
@@ -128,6 +180,7 @@ func (p *communityPolicy) scope(ctx context.Context, query ScopeQuery) (resource
 		entryRef = *query.Entry
 	}
 	accessible := make([]ResourceRef, 0, len(candidateRefs))
+	access := accessSession{resolve: evaluation.resolveAccess, ownerID: evaluation.resourceOwnerID, load: evaluation.loadResources}
 	for _, ref := range candidateRefs {
 		resource, resourceErr := evaluation.getResource(ref)
 		if resourceErr != nil {
@@ -143,7 +196,7 @@ func (p *communityPolicy) scope(ctx context.Context, query ScopeQuery) (resource
 		if query.Entry == nil {
 			checkErr = evaluation.checkResource(ctx, ref, query.Operation)
 		} else {
-			checkErr = evaluation.checkDependency(ctx, entryRef, ref, query.EntryOp, query.Operation)
+			checkErr = checkDependency(ctx, access, entryRef, ref, query.EntryOp, query.Operation)
 		}
 		if checkErr == nil {
 			accessible = append(accessible, ref)
@@ -248,7 +301,7 @@ func (p *communityPolicy) datasetQueryScope(ctx context.Context, query ScopeQuer
 		if query.Entry.Kind != ResourceKindCanvas || query.EntryOp == "" {
 			return QueryScope{}, false, nil
 		}
-		if err := p.CheckResource(ctx, *query.Entry, query.EntryOp); err != nil {
+		if err := checkResource(ctx, p.ResolveAccess, *query.Entry, query.EntryOp); err != nil {
 			return QueryScope{}, true, err
 		}
 		resources, err := source.GetResources(ctx, []ResourceRef{*query.Entry})
@@ -304,7 +357,7 @@ func (p *communityPolicy) memoryQueryScope(ctx context.Context, query ScopeQuery
 		if query.Entry.Kind != ResourceKindCanvas || query.EntryOp == "" {
 			return QueryScope{}, false, nil
 		}
-		if err := p.CheckResource(ctx, *query.Entry, query.EntryOp); err != nil {
+		if err := checkResource(ctx, p.ResolveAccess, *query.Entry, query.EntryOp); err != nil {
 			return QueryScope{}, true, err
 		}
 	}
@@ -581,7 +634,7 @@ func (p *communityPolicy) documentQueryScope(ctx context.Context, query ScopeQue
 		return QueryScope{}, true, ErrInvalidPermission
 	}
 	if query.Parent.ID != "" {
-		if err := p.CheckResource(ctx, query.Parent, documentDefinition.parentAccessOperation); err != nil {
+		if err := checkResource(ctx, p.ResolveAccess, query.Parent, documentDefinition.parentAccessOperation); err != nil {
 			return QueryScope{}, true, err
 		}
 	}
@@ -891,20 +944,6 @@ func (s *databaseSource) validateDatasetTenants(ctx context.Context, userID stri
 	return err
 }
 
-func (p *communityPolicy) FilterResources(ctx context.Context, refs []ResourceRef, operation Operation) ([]ResourceRef, error) {
-	accesses, err := p.FilterAccesses(ctx, refs, operation)
-	if err != nil {
-		return nil, err
-	}
-	accessible := make([]ResourceRef, 0, len(accesses))
-	for _, ref := range uniqueRefs(refs) {
-		if _, ok := accesses[ref]; ok {
-			accessible = append(accessible, ref)
-		}
-	}
-	return accessible, nil
-}
-
 func (p *communityPolicy) ResolveAccesses(ctx context.Context, refs []ResourceRef) (map[ResourceRef]Access, error) {
 	if strings.TrimSpace(UserIDFromContext(ctx)) == "" {
 		return nil, ErrUnauthenticated
@@ -925,22 +964,6 @@ func (p *communityPolicy) ResolveAccesses(ctx context.Context, refs []ResourceRe
 			continue
 		}
 		return nil, err
-	}
-	return accesses, nil
-}
-
-func (p *communityPolicy) FilterAccesses(ctx context.Context, refs []ResourceRef, operation Operation) (map[ResourceRef]Access, error) {
-	if !validOperation(operation) {
-		return nil, ErrInvalidPermission
-	}
-	accesses, err := p.ResolveAccesses(ctx, refs)
-	if err != nil {
-		return nil, err
-	}
-	for ref, access := range accesses {
-		if !access.Allows(operation) {
-			delete(accesses, ref)
-		}
 	}
 	return accesses, nil
 }
@@ -989,52 +1012,6 @@ func (e *evaluation) checkResource(ctx context.Context, ref ResourceRef, operati
 	return nil
 }
 
-func (e *evaluation) checkDependency(ctx context.Context, entryRef, dependencyRef ResourceRef, entryOperation, dependencyOperation Operation) error {
-	userID := strings.TrimSpace(UserIDFromContext(ctx))
-	if strings.TrimSpace(userID) == "" {
-		return ErrUnauthenticated
-	}
-	if !validOperation(entryOperation) || !validOperation(dependencyOperation) {
-		return ErrInvalidPermission
-	}
-	if err := e.loadResources(ctx, []ResourceRef{entryRef, dependencyRef}); err != nil {
-		return err
-	}
-	entry, err := e.getResource(entryRef)
-	if err != nil {
-		return err
-	}
-	entryAccess, err := e.resolveResource(ctx, entry)
-	if err != nil {
-		return err
-	}
-	if !accessAllows(entryAccess, entryOperation) {
-		return ErrPermissionDenied
-	}
-	dependency, err := e.getResource(dependencyRef)
-	if err != nil {
-		return err
-	}
-	userAccess, err := e.resolveResource(ctx, dependency)
-	if err != nil {
-		return err
-	}
-	if !accessAllows(userAccess, dependencyOperation) {
-		return ErrPermissionDenied
-	}
-	ownerAccess, err := e.resolveResourceForUser(ctx, entry.OwnerUserID, dependency)
-	if err != nil {
-		if errorsIsPermissionDenial(err) {
-			return ErrPermissionDenied
-		}
-		return err
-	}
-	if !accessAllows(ownerAccess, dependencyOperation) {
-		return ErrPermissionDenied
-	}
-	return nil
-}
-
 func (e *evaluation) resolveAccess(ctx context.Context, ref ResourceRef) (Access, error) {
 	userID := strings.TrimSpace(UserIDFromContext(ctx))
 	if strings.TrimSpace(userID) == "" {
@@ -1048,6 +1025,17 @@ func (e *evaluation) resolveAccess(ctx context.Context, ref ResourceRef) (Access
 		return Access{}, err
 	}
 	return e.resolveResource(ctx, resource)
+}
+
+func (e *evaluation) resourceOwnerID(ctx context.Context, ref ResourceRef) (string, error) {
+	if err := e.loadResources(ctx, []ResourceRef{ref}); err != nil {
+		return "", err
+	}
+	resource, err := e.getResource(ref)
+	if err != nil {
+		return "", err
+	}
+	return resource.OwnerUserID, nil
 }
 
 func (e *evaluation) resolveResource(ctx context.Context, resource Resource) (Access, error) {

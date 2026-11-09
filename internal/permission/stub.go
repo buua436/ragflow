@@ -21,6 +21,8 @@ package permission
 import (
 	"context"
 
+	"ragflow/internal/entity"
+
 	"gorm.io/gorm"
 )
 
@@ -36,4 +38,16 @@ func tenantRoleMembershipEnabled(db *gorm.DB) bool { return false }
 // The OSS build has none.
 func isTenantRoleID(ctx context.Context, db *gorm.DB, tenantID, roleValue string) (bool, error) {
 	return false, nil
+}
+
+func tenantPermissionMask(_ context.Context, _ *gorm.DB, _, _ string, role string) (int32, error) {
+	if role == string(RoleOwner) {
+		return entity.TenantPermissionManageMembers | entity.TenantPermissionManageRoles | entity.TenantPermissionOwner, nil
+	}
+	return 0, nil
+}
+
+// RecordTenantPermissionChange is a no-op in the community edition.
+func RecordTenantPermissionChange(context.Context, *gorm.DB, string, string, string, string, string, string, int32, int32, interface{}, interface{}) error {
+	return nil
 }

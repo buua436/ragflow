@@ -269,11 +269,16 @@ type Source interface {
 type policy interface {
 	CheckFeature(context.Context, Feature, Action) error
 	CheckTenant(context.Context, string, TenantRequirement) error
-	CheckResource(context.Context, ResourceRef, Operation) error
-	CheckDependency(context.Context, ResourceRef, ResourceRef, Operation, Operation) error
 	ResolveAccess(context.Context, ResourceRef) (Access, error)
+	resourceOwnerID(context.Context, ResourceRef) (string, error)
+	newAccessSession() accessSession
 	scope(context.Context, ScopeQuery) (resourceScope, error)
-	FilterResources(context.Context, []ResourceRef, Operation) ([]ResourceRef, error)
+}
+
+type accessSession struct {
+	resolve func(context.Context, ResourceRef) (Access, error)
+	ownerID func(context.Context, ResourceRef) (string, error)
+	load    func(context.Context, []ResourceRef) error
 }
 
 type queryScopePolicy interface {
@@ -336,7 +341,7 @@ func (c *Checker) CheckResource(ctx context.Context, resource ResourceRef, opera
 	if c == nil || c.policy == nil {
 		return ErrSourceUnavailable
 	}
-	return c.policy.CheckResource(ctx, resource, operation)
+	return checkResource(ctx, c.policy.ResolveAccess, resource, operation)
 }
 
 // CheckDependency checks entry access and the caller's and entry owner's access to a dependency.
@@ -344,7 +349,8 @@ func (c *Checker) CheckDependency(ctx context.Context, entry, dependency Resourc
 	if c == nil || c.policy == nil {
 		return ErrSourceUnavailable
 	}
-	return c.policy.CheckDependency(ctx, entry, dependency, entryOperation, dependencyOperation)
+	session := c.policy.newAccessSession()
+	return checkDependency(ctx, session, entry, dependency, entryOperation, dependencyOperation)
 }
 
 // ResolveAccess resolves the effective access for the authenticated identity in ctx.
@@ -407,7 +413,17 @@ func (c *Checker) FilterResources(ctx context.Context, resources []ResourceRef, 
 	if c == nil || c.policy == nil {
 		return nil, ErrSourceUnavailable
 	}
-	return c.policy.FilterResources(ctx, resources, operation)
+	accesses, err := c.FilterAccesses(ctx, resources, operation)
+	if err != nil {
+		return nil, err
+	}
+	accessible := make([]ResourceRef, 0, len(accesses))
+	for _, ref := range uniqueRefs(resources) {
+		if _, ok := accesses[ref]; ok {
+			accessible = append(accessible, ref)
+		}
+	}
+	return accessible, nil
 }
 
 // ResolveAccesses resolves effective access for a batch of resources.

@@ -48,32 +48,6 @@ type tenantInviteRole struct {
 	roleName string
 }
 
-// tenantMemberPermission keeps community membership policy in shared code and
-// lets Enterprise apply its Tenant permission grants through the EE hook.
-func tenantMemberPermission(ctx context.Context, db *gorm.DB, tenantID string, required int32) (*entity.UserTenant, int32, error) {
-	userID := permission.UserIDFromContext(ctx)
-	membership, mask, handled, err := tenantMemberPermissionEE(ctx, db, tenantID, required)
-	if err != nil || handled {
-		return membership, mask, err
-	}
-
-	requirement := permission.TenantMember
-	if required != 0 {
-		requirement = permission.TenantOwner
-	}
-	checker := permission.NewDatabaseChecker(db)
-	if err := checker.CheckTenant(ctx, tenantID, requirement); err != nil {
-		return nil, 0, err
-	}
-	var communityMembership entity.UserTenant
-	if err := db.WithContext(ctx).
-		Where("user_id = ? AND tenant_id = ? AND status = ?", userID, tenantID, string(entity.StatusValid)).
-		Take(&communityMembership).Error; err != nil {
-		return nil, 0, err
-	}
-	return &communityMembership, 0, nil
-}
-
 func tenantRoleErrorCode(err error) common.ErrorCode {
 	var coded *common.CodedError
 	if errors.As(err, &coded) {
@@ -81,10 +55,6 @@ func tenantRoleErrorCode(err error) common.ErrorCode {
 	}
 	code, _ := permissionresponse.Normalize(err)
 	return code
-}
-
-func recordTenantPermissionChange(ctx context.Context, tx *gorm.DB, tenantID, eventType, targetType, targetID, resourceType, resourceID, actionType string, beforePermission, afterPermission int32, beforeData, afterData interface{}) error {
-	return recordTenantPermissionChangeEE(ctx, tx, tenantID, eventType, targetType, targetID, resourceType, resourceID, actionType, beforePermission, afterPermission, beforeData, afterData)
 }
 
 func resolveTenantInviteRole(tx *gorm.DB, tenantID string) (tenantInviteRole, error) {
@@ -296,7 +266,7 @@ type TenantMemberResponse struct {
 
 // ListMembers returns all non-owner members of tenantID.
 func (s *TenantService) ListMembers(ctx context.Context, tenantID string) ([]*TenantMemberResponse, common.ErrorCode, error) {
-	if _, _, err := tenantMemberPermission(ctx, dao.DB.WithContext(ctx), tenantID, entity.TenantPermissionManageMembers); err != nil {
+	if _, _, err := permission.TenantMemberAccess(ctx, dao.DB.WithContext(ctx), tenantID, entity.TenantPermissionManageMembers); err != nil {
 		return nil, tenantRoleErrorCode(err), err
 	}
 	rows, err := s.userTenantDAO.GetMembersByTenantID(ctx, dao.DB, tenantID)
@@ -341,7 +311,7 @@ type AddMemberResponse struct {
 // AddMember invites a user (by email) to the tenant.
 func (s *TenantService) AddMember(ctx context.Context, tenantID string, req *AddMemberRequest) (*AddMemberResponse, common.ErrorCode, error) {
 	userID := permission.UserIDFromContext(ctx)
-	if _, _, err := tenantMemberPermission(ctx, dao.DB.WithContext(ctx), tenantID, entity.TenantPermissionManageMembers); err != nil {
+	if _, _, err := permission.TenantMemberAccess(ctx, dao.DB.WithContext(ctx), tenantID, entity.TenantPermissionManageMembers); err != nil {
 		return nil, tenantRoleErrorCode(err), err
 	}
 	if req == nil {
@@ -385,7 +355,7 @@ func (s *TenantService) AddMember(ctx context.Context, tenantID string, req *Add
 			if err := tx.Create(&membership).Error; err != nil {
 				return fmt.Errorf("failed to create invitation: %w", err)
 			}
-			return recordTenantPermissionChange(ctx, tx, tenantID, "tenant.member.invited", "user", invitee.ID, "tenant_membership", membership.ID, "invite", 0, 0, nil,
+			return permission.RecordTenantPermissionChange(ctx, tx, "tenant.member.invited", "user", invitee.ID, "tenant_membership", membership.ID, "invite", 0, 0, nil,
 				map[string]interface{}{"user_id": invitee.ID, "email": invitee.Email, "role": membership.Role, "invited_by": userID, "status": status})
 		}
 		oldStatus := tenantMembershipStatus(existing.Status)
@@ -408,7 +378,7 @@ func (s *TenantService) AddMember(ctx context.Context, tenantID string, req *Add
 		}
 		existing.Role, existing.InvitedBy, existing.Status = "", userID, &status
 		membership = existing
-		return recordTenantPermissionChange(ctx, tx, tenantID, "tenant.member.invited", "user", invitee.ID, "tenant_membership", membership.ID, "invite", 0, 0, before,
+		return permission.RecordTenantPermissionChange(ctx, tx, "tenant.member.invited", "user", invitee.ID, "tenant_membership", membership.ID, "invite", 0, 0, before,
 			map[string]interface{}{"user_id": invitee.ID, "email": invitee.Email, "role": membership.Role, "invited_by": userID, "status": status})
 	})
 	if err != nil {
@@ -427,7 +397,7 @@ func (s *TenantService) RemoveMember(ctx context.Context, tenantID, targetUserID
 		return common.CodeServerError, fmt.Errorf("userTenantDAO not initialized")
 	}
 	if userID != targetUserID {
-		if _, _, err := tenantMemberPermission(ctx, dao.DB.WithContext(ctx), tenantID, entity.TenantPermissionManageMembers); err != nil {
+		if _, _, err := permission.TenantMemberAccess(ctx, dao.DB.WithContext(ctx), tenantID, entity.TenantPermissionManageMembers); err != nil {
 			return tenantRoleErrorCode(err), err
 		}
 	}
@@ -477,7 +447,7 @@ func (s *TenantService) RemoveMember(ctx context.Context, tenantID, targetUserID
 			"user_id": membership.UserID, "role": "",
 			"invited_by": membership.InvitedBy, "status": newStatus,
 		}
-		return recordTenantPermissionChange(ctx, tx, tenantID, eventType, "user", targetUserID, "tenant_membership", membership.ID, actionType, 0, 0, before, after)
+		return permission.RecordTenantPermissionChange(ctx, tx, eventType, "user", targetUserID, "tenant_membership", membership.ID, actionType, 0, 0, before, after)
 	})
 	if err != nil {
 		return tenantRoleErrorCode(err), err
@@ -534,7 +504,7 @@ func (s *TenantService) AcceptInvite(ctx context.Context, tenantID string) (comm
 		if role.roleName != "" {
 			after["role_name"] = role.roleName
 		}
-		return recordTenantPermissionChange(ctx, tx, tenantID, "tenant.member.joined", "user", userID, "tenant_membership", membership.ID, "join", 0, 0, before, after)
+		return permission.RecordTenantPermissionChange(ctx, tx, "tenant.member.joined", "user", userID, "tenant_membership", membership.ID, "join", 0, 0, before, after)
 	})
 	if err != nil {
 		return tenantRoleErrorCode(err), err

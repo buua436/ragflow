@@ -63,17 +63,6 @@ func prepareAgentCreation(ctx context.Context) (string, error) {
 	return permission.UserIDFromContext(ctx), nil
 }
 
-// tenantMemberPermissionEE leaves membership checks to the community policy.
-func tenantMemberPermissionEE(ctx context.Context, db *gorm.DB, tenantID string, required int32) (*entity.UserTenant, int32, bool, error) {
-	return nil, 0, false, nil
-}
-
-// recordTenantPermissionChangeEE records nothing: the community edition has no
-// permission audit trail.
-func recordTenantPermissionChangeEE(ctx context.Context, tx *gorm.DB, tenantID, eventType, targetType, targetID, resourceType, resourceID, actionType string, beforePermission, afterPermission int32, beforeData, afterData interface{}) error {
-	return nil
-}
-
 // resolveTenantInviteRoleEE leaves invite roles to the community default.
 func resolveTenantInviteRoleEE(*gorm.DB, string) (tenantInviteRole, bool, error) {
 	return tenantInviteRole{}, false, nil
