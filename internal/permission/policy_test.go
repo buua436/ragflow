@@ -5,13 +5,18 @@ package permission
 import (
 	"context"
 	"errors"
+	"net/url"
 	"testing"
+
+	"github.com/glebarez/sqlite"
+	"gorm.io/gorm"
 )
 
 type permissionTestSource struct {
 	memberships map[string]*Membership
 	resources   map[ResourceRef]Resource
 	candidates  []ResourceRef
+	queryTenant string
 }
 
 func (s *permissionTestSource) GetMembership(_ context.Context, userID, tenantID string) (*Membership, error) {
@@ -28,7 +33,8 @@ func (s *permissionTestSource) GetResources(_ context.Context, refs []ResourceRe
 	return resources, nil
 }
 
-func (s *permissionTestSource) ListResourceRefs(_ context.Context, kind ResourceKind, parent ResourceRef) ([]ResourceRef, error) {
+func (s *permissionTestSource) ListResourceRefs(ctx context.Context, kind ResourceKind, parent ResourceRef) ([]ResourceRef, error) {
+	s.queryTenant = TenantIDFromContext(ctx)
 	refs := make([]ResourceRef, 0, len(s.candidates))
 	for _, ref := range s.candidates {
 		if ref.Kind == kind {
@@ -109,6 +115,51 @@ func TestCheckerQueryScopeRejectsTenantMismatch(t *testing.T) {
 	})
 	if !errors.Is(err, ErrIdentityMismatch) {
 		t.Fatalf("QueryScope() error = %v, want identity mismatch", err)
+	}
+}
+
+func TestCheckerQueryScopeKeepsTenantBoundaryOutOfContext(t *testing.T) {
+	targetRef := ResourceRef{Kind: ResourceKindDataset, ID: "target-dataset"}
+	otherRef := ResourceRef{Kind: ResourceKindDataset, ID: "other-dataset"}
+	resource := func(ref ResourceRef, tenantID string) Resource {
+		return Resource{
+			Ref: ref, TenantID: tenantID, OwnerUserID: "user-1", Visibility: VisibilityPrivate,
+			OwnerOperations: []Operation{OperationRead}, Active: true,
+		}
+	}
+	source := &permissionTestSource{
+		resources: map[ResourceRef]Resource{
+			targetRef: resource(targetRef, "target-tenant"),
+			otherRef:  resource(otherRef, "other-tenant"),
+		},
+		candidates: []ResourceRef{targetRef, otherRef},
+	}
+	scope, err := NewChecker(source).QueryScope(WithIdentity(context.Background(), "user-1", ""), ScopeQuery{
+		TenantID: "target-tenant", Kind: ResourceKindDataset, Operation: OperationRead,
+	})
+	if err != nil {
+		t.Fatalf("QueryScope() error = %v", err)
+	}
+	if source.queryTenant != "" {
+		t.Fatalf("query tenant changed context tenant to %q", source.queryTenant)
+	}
+
+	db, err := gorm.Open(sqlite.Open("file:"+url.QueryEscape(t.Name())+"?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	if err := db.Exec("CREATE TABLE knowledgebase (id TEXT PRIMARY KEY)").Error; err != nil {
+		t.Fatalf("create knowledgebase: %v", err)
+	}
+	if err := db.Exec("INSERT INTO knowledgebase (id) VALUES (?), (?)", targetRef.ID, otherRef.ID).Error; err != nil {
+		t.Fatalf("insert datasets: %v", err)
+	}
+	var ids []string
+	if err := scope.Apply(db.Table("knowledgebase")).Order("id").Pluck("id", &ids).Error; err != nil {
+		t.Fatalf("apply QueryScope(): %v", err)
+	}
+	if len(ids) != 1 || ids[0] != targetRef.ID {
+		t.Fatalf("QueryScope() IDs = %v, want only %q", ids, targetRef.ID)
 	}
 }
 

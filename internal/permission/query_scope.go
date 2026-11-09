@@ -109,11 +109,12 @@ func queryFilterScope(query ScopeQuery) (QueryScope, error) {
 	if len(query.TenantIDs) == 0 && len(query.OwnerUserIDs) == 0 {
 		return QueryScope{}, nil
 	}
-	mapping, ok := queryResourceMappings[query.Kind]
+	mapping, ok := resourceDefinitionFor(query.Kind)
 	if !ok {
 		return QueryScope{}, ErrInvalidPermission
 	}
-	if (len(query.TenantIDs) > 0 && mapping.tenantColumn == "") || (len(query.OwnerUserIDs) > 0 && mapping.ownerColumn == "") {
+	if (len(query.TenantIDs) > 0 && mapping.tenantColumn == "" && mapping.tenantRelation == nil) ||
+		(len(query.OwnerUserIDs) > 0 && mapping.ownerColumn == "" && mapping.ownerRelation == nil) {
 		return QueryScope{}, ErrInvalidPermission
 	}
 	return QueryScope{apply: func(db *gorm.DB) *gorm.DB {
@@ -121,18 +122,30 @@ func queryFilterScope(query ScopeQuery) (QueryScope, error) {
 			if len(tenantIDs) == 0 {
 				db = db.Where("1 = 0")
 			} else {
-				db = db.Where(clause.IN{Column: clause.Column{Table: mapping.table, Name: mapping.tenantColumn}, Values: stringValues(tenantIDs)})
+				db = applyResourceFieldScope(db, mapping.table, mapping.tenantColumn, mapping.tenantRelation, tenantIDs)
 			}
 		}
 		if len(query.OwnerUserIDs) > 0 {
 			if len(ownerUserIDs) == 0 {
 				db = db.Where("1 = 0")
 			} else {
-				db = db.Where(clause.IN{Column: clause.Column{Table: mapping.table, Name: mapping.ownerColumn}, Values: stringValues(ownerUserIDs)})
+				db = applyResourceFieldScope(db, mapping.table, mapping.ownerColumn, mapping.ownerRelation, ownerUserIDs)
 			}
 		}
 		return db
 	}}, nil
+}
+
+func applyResourceFieldScope(query *gorm.DB, table, column string, relation *resourceRelation, values []string) *gorm.DB {
+	if relation == nil {
+		return query.Where(clause.IN{Column: clause.Column{Table: table, Name: column}, Values: stringValues(values)})
+	}
+	ids := query.Session(&gorm.Session{NewDB: true}).Table(relation.table).Select(relation.relatedIDColumn).
+		Where(clause.IN{Column: clause.Column{Table: relation.table, Name: relation.relatedColumn}, Values: stringValues(values)})
+	return query.Where(clause.Expr{
+		SQL:  "? IN (?)",
+		Vars: []interface{}{clause.Column{Table: table, Name: relation.localColumn}, ids},
+	})
 }
 
 func uniqueFilterValues(values []string) []string {
@@ -161,7 +174,7 @@ func stringValues(values []string) []interface{} {
 }
 
 func queryScopeForIDs(kind ResourceKind, ids []string) QueryScope {
-	mapping, ok := queryResourceMappings[kind]
+	mapping, ok := resourceDefinitionFor(kind)
 	if !ok {
 		return QueryScope{}
 	}
@@ -185,33 +198,4 @@ func queryScopeForIDs(kind ResourceKind, ids []string) QueryScope {
 // authorization to an explicit set of resource IDs.
 func QueryScopeForIDs(kind ResourceKind, ids []string) QueryScope {
 	return queryScopeForIDs(kind, ids)
-}
-
-type resourceQueryMapping struct {
-	table        string
-	tenantColumn string
-	ownerColumn  string
-}
-
-// Query filtering uses the same field names that the permission resource
-// loader maps as resource tenant and owner facts.
-var queryResourceMappings = map[ResourceKind]resourceQueryMapping{
-	ResourceKindDataset:       {table: "knowledgebase", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindDocument:      {table: "document"},
-	ResourceKindCanvas:        {table: "user_canvas", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindAgentSession:  {table: "api_4_conversation"},
-	ResourceKindMemory:        {table: "memory", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindFile:          {table: "file", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindFolder:        {table: "file", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindSearchApp:     {table: "search", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindChat:          {table: "dialog", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindChatSession:   {table: "conversation"},
-	ResourceKindChatChannel:   {table: "chat_channel", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindConnector:     {table: "connector", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindSyncTask:      {table: "sync_logs"},
-	ResourceKindModelProvider: {table: "tenant_model_provider", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindModelInstance: {table: "tenant_model_instance"},
-	ResourceKindModel:         {table: "tenant_model"},
-	ResourceKindMCPServer:     {table: "mcp_server", tenantColumn: "tenant_id", ownerColumn: "user_id"},
-	ResourceKindSkillSpace:    {table: "skill_spaces", tenantColumn: "tenant_id", ownerColumn: "user_id"},
 }

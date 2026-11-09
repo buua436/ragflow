@@ -24,6 +24,7 @@ import (
 	"ragflow/internal/entity"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type communityPolicy struct {
@@ -47,6 +48,11 @@ func newPolicy(source Source) policy {
 		return activePolicy
 	}
 	return &communityPolicy{source: source}
+}
+
+func (p *communityPolicy) nativeQueryScopeRequired() bool {
+	source, ok := p.source.(*databaseSource)
+	return ok && source != nil && source.db != nil
 }
 
 func (p *communityPolicy) CheckFeature(ctx context.Context, feature Feature, action Action) error {
@@ -123,6 +129,16 @@ func (p *communityPolicy) scope(ctx context.Context, query ScopeQuery) (resource
 	}
 	accessible := make([]ResourceRef, 0, len(candidateRefs))
 	for _, ref := range candidateRefs {
+		resource, resourceErr := evaluation.getResource(ref)
+		if resourceErr != nil {
+			if errors.Is(resourceErr, ErrResourceNotFound) {
+				continue
+			}
+			return resourceScope{}, resourceErr
+		}
+		if tenantID := strings.TrimSpace(query.TenantID); tenantID != "" && resource.TenantID != tenantID {
+			continue
+		}
 		var checkErr error
 		if query.Entry == nil {
 			checkErr = evaluation.checkResource(ctx, ref, query.Operation)
@@ -177,12 +193,38 @@ func (p *communityPolicy) QueryScope(ctx context.Context, query ScopeQuery) (Que
 	if query.Kind == ResourceKindModelProvider || query.Kind == ResourceKindModelInstance || query.Kind == ResourceKindModel {
 		return p.modelQueryScope(ctx, query)
 	}
-	if query.Kind == ResourceKindMCPServer && query.Operation == OperationRead && query.Parent.ID == "" && query.Parent.Kind == "" && query.Entry == nil {
-		return p.mcpServerReadQueryScope(ctx, query.TenantID)
+	switch query.Kind {
+	case ResourceKindCanvas:
+		return p.communityResourceQueryScope(ctx, query)
+	case ResourceKindMemory:
+		return p.memoryQueryScope(ctx, query)
+	case ResourceKindFile, ResourceKindFolder:
+		return p.fileQueryScope(ctx, query)
+	case ResourceKindSearchApp:
+		return p.communityResourceQueryScope(ctx, query)
+	case ResourceKindChat:
+		return p.communityResourceQueryScope(ctx, query)
+	case ResourceKindChatChannel:
+		return p.communityResourceQueryScope(ctx, query)
+	case ResourceKindSkillSpace:
+		return p.skillSpaceQueryScope(ctx, query)
+	case ResourceKindConnector:
+		return p.communityResourceQueryScope(ctx, query)
+	case ResourceKindAgentSession:
+		return p.agentSessionQueryScope(ctx, query)
+	case ResourceKindDocument:
+		return p.documentQueryScope(ctx, query)
 	}
-	if query.Kind != ResourceKindDataset || query.Operation != OperationRead || query.Parent.ID != "" || query.Parent.Kind != "" || query.Entry != nil {
-		return QueryScope{}, false, nil
+	if query.Kind == ResourceKindMCPServer {
+		return p.communityResourceQueryScope(ctx, query)
 	}
+	if query.Kind == ResourceKindDataset {
+		return p.datasetQueryScope(ctx, query)
+	}
+	return QueryScope{}, false, nil
+}
+
+func (p *communityPolicy) datasetQueryScope(ctx context.Context, query ScopeQuery) (QueryScope, bool, error) {
 	userID := strings.TrimSpace(UserIDFromContext(ctx))
 	if userID == "" {
 		return QueryScope{}, true, ErrUnauthenticated
@@ -201,24 +243,408 @@ func (p *communityPolicy) QueryScope(ctx context.Context, query ScopeQuery) (Que
 		return QueryScope{}, false, nil
 	}
 
-	tenantID := query.TenantID
-	return QueryScope{apply: func(query *gorm.DB) *gorm.DB {
-		db := source.db.WithContext(ctx)
-		activeOwner := db.Model(&entity.UserTenant{}).
-			Select("1").
-			Where("user_tenant.tenant_id = knowledgebase.tenant_id AND user_tenant.role = ? AND user_tenant.status = ?", string(RoleOwner), string(entity.StatusValid))
-		callerIsMember := db.Model(&entity.UserTenant{}).
-			Select("1").
-			Where("user_tenant.tenant_id = knowledgebase.tenant_id AND user_tenant.user_id = ? AND user_tenant.role = ? AND user_tenant.status = ?", userID, string(RoleNormal), string(entity.StatusValid))
-		accessibleDatasets := db.Model(&entity.Knowledgebase{}).
-			Select("knowledgebase.id").
-			Where("knowledgebase.status = ?", string(entity.StatusValid)).
-			Where("EXISTS (?)", activeOwner).
-			Where("(knowledgebase.user_id = ? OR (knowledgebase.permission = ? AND EXISTS (?)))", userID, string(entity.TenantPermissionTeam), callerIsMember)
-		if tenantID != "" {
-			accessibleDatasets = accessibleDatasets.Where("knowledgebase.tenant_id = ?", tenantID)
+	var entryOwnerID string
+	if query.Entry != nil {
+		if query.Entry.Kind != ResourceKindCanvas || query.EntryOp == "" {
+			return QueryScope{}, false, nil
 		}
-		return query.Where("knowledgebase.id IN (?)", accessibleDatasets)
+		if err := p.CheckResource(ctx, *query.Entry, query.EntryOp); err != nil {
+			return QueryScope{}, true, err
+		}
+		resources, err := source.GetResources(ctx, []ResourceRef{*query.Entry})
+		if err != nil {
+			return QueryScope{}, true, err
+		}
+		if len(resources) != 1 {
+			return QueryScope{}, true, ErrResourceNotFound
+		}
+		entryOwnerID = strings.TrimSpace(resources[0].OwnerUserID)
+		if entryOwnerID == "" {
+			return QueryScope{}, true, ErrInvalidPermission
+		}
+	}
+
+	tenantID := strings.TrimSpace(query.TenantID)
+	operation := query.Operation
+	return QueryScope{apply: func(query *gorm.DB) *gorm.DB {
+		query = query.Where("knowledgebase.status = ?", string(entity.StatusValid))
+		if tenantID != "" {
+			query = query.Where("knowledgebase.tenant_id = ?", tenantID)
+		}
+		query = communityDatasetAccess(query, userID, operation)
+		if entryOwnerID != "" && entryOwnerID != userID {
+			query = communityDatasetAccess(query, entryOwnerID, operation)
+		}
+		return query
+	}}, true, nil
+}
+
+func communityDatasetAccess(query *gorm.DB, userID string, operation Operation) *gorm.DB {
+	definition, _ := resourceDefinitionFor(ResourceKindDataset)
+	accessSQL, values := communityUserAccessSQL(
+		definition, "knowledgebase", userID, operation,
+		definition.ownerOperations, definition.tenantOperations,
+		definition.visibilityColumn, definition.tenantValue, definition.tenantRequirement,
+	)
+	if accessSQL == "" {
+		return query.Where("1 = 0")
+	}
+	return query.Where("("+accessSQL+")", values...)
+}
+
+func (p *communityPolicy) memoryQueryScope(ctx context.Context, query ScopeQuery) (QueryScope, bool, error) {
+	userID := strings.TrimSpace(UserIDFromContext(ctx))
+	if userID == "" {
+		return QueryScope{}, true, ErrUnauthenticated
+	}
+	if query.Parent.ID != "" || query.Parent.Kind != "" {
+		return QueryScope{}, false, nil
+	}
+	if query.Entry != nil {
+		if query.Entry.Kind != ResourceKindCanvas || query.EntryOp == "" {
+			return QueryScope{}, false, nil
+		}
+		if err := p.CheckResource(ctx, *query.Entry, query.EntryOp); err != nil {
+			return QueryScope{}, true, err
+		}
+	}
+	ownerIDs := []string{userID}
+	if query.Entry != nil {
+		resources, err := p.source.GetResources(ctx, []ResourceRef{*query.Entry})
+		if err != nil {
+			return QueryScope{}, true, err
+		}
+		if len(resources) != 1 || strings.TrimSpace(resources[0].OwnerUserID) == "" {
+			return QueryScope{}, true, ErrResourceNotFound
+		}
+		ownerIDs = append(ownerIDs, strings.TrimSpace(resources[0].OwnerUserID))
+	}
+	definition, ok := resourceDefinitionFor(ResourceKindMemory)
+	if !ok {
+		return QueryScope{}, true, ErrInvalidPermission
+	}
+	source, ok := p.source.(*databaseSource)
+	if !ok || source.db == nil {
+		return QueryScope{}, false, nil
+	}
+	if tenantRoleMembershipEnabled(source.db) {
+		return QueryScope{}, false, nil
+	}
+	operation := query.Operation
+	tenantID := strings.TrimSpace(query.TenantID)
+	return QueryScope{apply: func(db *gorm.DB) *gorm.DB {
+		if tenantID != "" {
+			db = db.Where("memory.tenant_id = ?", tenantID)
+		}
+		access := db
+		for _, ownerID := range uniqueStringValues(ownerIDs) {
+			accessSQL, values := communityUserAccessSQL(
+				definition, definition.table, ownerID, operation,
+				definition.ownerOperations, definition.tenantOperations,
+				definition.visibilityColumn, definition.tenantValue, definition.tenantRequirement,
+			)
+			if accessSQL == "" {
+				return db.Where("1 = 0")
+			}
+			access = access.Where("("+accessSQL+")", values...)
+		}
+		return access
+	}}, true, nil
+}
+
+func (p *communityPolicy) communityResourceQueryScope(ctx context.Context, query ScopeQuery) (QueryScope, bool, error) {
+	userID := strings.TrimSpace(UserIDFromContext(ctx))
+	if userID == "" {
+		return QueryScope{}, true, ErrUnauthenticated
+	}
+	if query.Entry != nil || query.Parent.ID != "" || query.Parent.Kind != "" {
+		return QueryScope{}, false, nil
+	}
+	definition, ok := resourceDefinitionFor(query.Kind)
+	if !ok || (definition.tenantColumn == "" && definition.tenantRelation == nil) {
+		return QueryScope{}, false, nil
+	}
+	source, ok := p.source.(*databaseSource)
+	if !ok || source.db == nil {
+		return QueryScope{}, false, nil
+	}
+	if tenantRoleMembershipEnabled(source.db) {
+		return QueryScope{}, false, nil
+	}
+	if !containsOperation(definition.ownerOperations, query.Operation) && !containsOperation(definition.tenantOperations, query.Operation) {
+		return QueryScope{apply: func(db *gorm.DB) *gorm.DB { return db.Where("1 = 0") }}, true, nil
+	}
+	queryTenantID := strings.TrimSpace(query.TenantID)
+	operation := query.Operation
+	return QueryScope{apply: func(db *gorm.DB) *gorm.DB {
+		if queryTenantID != "" {
+			sql, values := resourceFieldEqualsSQL(definition.table, definition.tenantColumn, definition.tenantRelation, queryTenantID)
+			db = db.Where(sql, values...)
+		}
+		if definition.statusColumn != "" {
+			db = db.Where(definition.table+"."+definition.statusColumn+" = ?", definition.statusValue)
+		}
+		accessSQL, values := communityUserAccessSQL(
+			definition, definition.table, userID, operation,
+			definition.ownerOperations, definition.tenantOperations, definition.visibilityColumn, definition.tenantValue, definition.tenantRequirement,
+		)
+		if accessSQL == "" {
+			return db.Where("1 = 0")
+		}
+		return db.Where("("+accessSQL+")", values...)
+	}}, true, nil
+}
+
+func communityUserAccessSQL(
+	definition resourceDefinition,
+	table, userID string,
+	operation Operation,
+	ownerOperations, tenantOperations []Operation,
+	visibilityColumn, tenantValue string,
+	tenantRequirement TenantRequirement,
+) (string, []interface{}) {
+	branches := make([]string, 0, 2)
+	values := make([]interface{}, 0, 6)
+	if containsOperation(ownerOperations, operation) {
+		ownerColumn, ownerValues := resourceFieldEqualsSQL(table, definition.ownerColumn, definition.ownerRelation, userID)
+		if ownerColumn != "" {
+			branches = append(branches, ownerColumn)
+			values = append(values, ownerValues...)
+		}
+	}
+	if containsOperation(tenantOperations, operation) {
+		membershipSQL := communityMembershipSQL(definition, table, userID, tenantRequirement)
+		if membershipSQL != "" {
+			branch := membershipSQL
+			if visibilityColumn != "" {
+				branch = "(" + table + "." + visibilityColumn + " = ? AND " + membershipSQL + ")"
+				values = append(values, tenantValue)
+			}
+			branches = append(branches, branch)
+			values = append(values, userID, string(entity.StatusValid), communityTenantRoles(tenantRequirement))
+		}
+	}
+	return strings.Join(branches, " OR "), values
+}
+
+func communityMembershipSQL(definition resourceDefinition, table, userID string, requirement TenantRequirement) string {
+	if definition.tenantColumn == "" && definition.tenantRelation == nil {
+		return ""
+	}
+	var tenantMatch string
+	if definition.tenantRelation == nil {
+		tenantMatch = "user_tenant.tenant_id = " + table + "." + definition.tenantColumn
+	} else {
+		relation := definition.tenantRelation
+		tenantMatch = "user_tenant.tenant_id IN (SELECT " + relation.relatedColumn + " FROM " + relation.table +
+			" WHERE " + relation.table + "." + relation.relatedIDColumn + " = " + table + "." + relation.localColumn + ")"
+	}
+	return "EXISTS (SELECT 1 FROM user_tenant WHERE " + tenantMatch +
+		" AND user_tenant.user_id = ? AND user_tenant.status = ? AND user_tenant.role IN ? )"
+}
+
+func communityTenantRoles(requirement TenantRequirement) []string {
+	switch requirement {
+	case TenantNormalMember:
+		return []string{string(RoleNormal)}
+	case TenantAdmin:
+		return []string{string(RoleOwner), string(RoleAdmin)}
+	case TenantOwner:
+		return []string{string(RoleOwner)}
+	default:
+		return []string{string(RoleOwner), string(RoleAdmin), string(RoleNormal)}
+	}
+}
+
+func resourceFieldEqualsSQL(table, column string, relation *resourceRelation, value string) (string, []interface{}) {
+	if relation == nil {
+		if column == "" {
+			return "", nil
+		}
+		return table + "." + column + " = ?", []interface{}{value}
+	}
+	return table + "." + relation.localColumn + " IN (SELECT " + relation.relatedIDColumn + " FROM " + relation.table +
+		" WHERE " + relation.table + "." + relation.relatedColumn + " = ?)", []interface{}{value}
+}
+
+func (p *communityPolicy) fileQueryScope(ctx context.Context, query ScopeQuery) (QueryScope, bool, error) {
+	userID := strings.TrimSpace(UserIDFromContext(ctx))
+	if userID == "" {
+		return QueryScope{}, true, ErrUnauthenticated
+	}
+	if _, ok := resourceDefinitionFor(query.Kind); !ok || query.Entry != nil {
+		return QueryScope{}, false, nil
+	}
+	parentID := strings.TrimSpace(query.Parent.ID)
+	if (parentID == "") != (query.Parent.Kind == "") || (parentID != "" && query.Parent.Kind != ResourceKindFolder) {
+		return QueryScope{}, false, nil
+	}
+	source, ok := p.source.(*databaseSource)
+	if !ok || source.db == nil {
+		return QueryScope{}, false, nil
+	}
+	if tenantRoleMembershipEnabled(source.db) {
+		return QueryScope{}, false, nil
+	}
+	if query.Operation != OperationRead {
+		return QueryScope{apply: func(db *gorm.DB) *gorm.DB { return db.Where("1 = 0") }}, true, nil
+	}
+	tenantID := strings.TrimSpace(query.TenantID)
+	return QueryScope{apply: func(db *gorm.DB) *gorm.DB {
+		db = db.Where("file.user_id <> ''")
+		if parentID != "" {
+			db = db.Where("EXISTS (SELECT 1 FROM file AS scope_parent WHERE scope_parent.id = ? AND scope_parent.tenant_id = file.tenant_id AND scope_parent.type = ?)", parentID, "folder")
+		}
+		if tenantID != "" {
+			db = db.Where("file.tenant_id = ?", tenantID)
+		} else {
+			db = db.Where("file.tenant_id <> ''")
+		}
+		if query.Kind == ResourceKindFolder {
+			db = db.Where("file.type = ?", "folder")
+		}
+		shared := "EXISTS (SELECT 1 FROM file2document AS f2d JOIN document AS shared_document ON shared_document.id = f2d.document_id JOIN knowledgebase AS shared_dataset ON shared_dataset.id = shared_document.kb_id WHERE f2d.file_id = file.id AND shared_dataset.status = ? AND (shared_dataset.user_id = ? OR (shared_dataset.permission = ? AND EXISTS (SELECT 1 FROM user_tenant AS shared_member WHERE shared_member.tenant_id = shared_dataset.tenant_id AND shared_member.user_id = ? AND shared_member.status = ? AND shared_member.role = ?))))"
+		return db.Where("(file.user_id = ? OR "+shared+")", userID,
+			string(entity.StatusValid), userID, string(entity.TenantPermissionTeam), userID, string(entity.StatusValid), string(RoleNormal))
+	}}, true, nil
+}
+
+func (p *communityPolicy) skillSpaceQueryScope(ctx context.Context, query ScopeQuery) (QueryScope, bool, error) {
+	scope, supported, err := p.communityResourceQueryScope(ctx, query)
+	if err != nil || !supported {
+		return scope, supported, err
+	}
+	folderExists := QueryScope{apply: func(db *gorm.DB) *gorm.DB {
+		return db.Where("EXISTS (SELECT 1 FROM file AS skill_folder WHERE skill_folder.id = skill_spaces.folder_id AND skill_folder.tenant_id = skill_spaces.tenant_id AND skill_folder.type = ?)", "folder")
+	}}
+	return scope.and(folderExists), true, nil
+}
+
+func (p *communityPolicy) agentSessionQueryScope(ctx context.Context, query ScopeQuery) (QueryScope, bool, error) {
+	userID := strings.TrimSpace(UserIDFromContext(ctx))
+	if userID == "" {
+		return QueryScope{}, true, ErrUnauthenticated
+	}
+	definition, ok := resourceDefinitionFor(ResourceKindAgentSession)
+	if !ok || query.Entry != nil || !validOperation(query.Operation) {
+		return QueryScope{}, false, nil
+	}
+	if query.Parent.ID != "" {
+		if _, ok := resourceParentColumn(definition, query.Parent.Kind); !ok {
+			return QueryScope{}, true, ErrInvalidPermission
+		}
+	} else if query.Parent.Kind != "" {
+		return QueryScope{}, false, nil
+	}
+	if _, ok := p.source.(*databaseSource); !ok {
+		return QueryScope{}, false, nil
+	}
+	if !containsOperation([]Operation{OperationRead, OperationRun, OperationUpdate, OperationDelete}, query.Operation) {
+		return QueryScope{apply: func(db *gorm.DB) *gorm.DB { return db.Where("1 = 0") }}, true, nil
+	}
+	tenantID := strings.TrimSpace(query.TenantID)
+	parentID := strings.TrimSpace(query.Parent.ID)
+	return QueryScope{apply: func(db *gorm.DB) *gorm.DB {
+		if tenantID != "" {
+			sql, values := resourceFieldEqualsSQL(definition.table, "", definition.tenantRelation, tenantID)
+			db = db.Where(sql, values...)
+		} else {
+			db = db.Where("EXISTS (SELECT 1 FROM user_canvas WHERE user_canvas.id = api_4_conversation.dialog_id AND COALESCE(user_canvas.tenant_id, '') <> '')")
+		}
+		if parentID != "" {
+			parentColumn, _ := resourceParentColumn(definition, query.Parent.Kind)
+			db = db.Where(clause.Eq{Column: clause.Column{Table: definition.table, Name: parentColumn}, Value: parentID})
+		}
+		return db.Where("api_4_conversation.user_id = ?", userID).
+			Where("EXISTS (SELECT 1 FROM user_canvas WHERE user_canvas.id = api_4_conversation.dialog_id)")
+	}}, true, nil
+}
+
+func (p *communityPolicy) documentQueryScope(ctx context.Context, query ScopeQuery) (QueryScope, bool, error) {
+	userID := strings.TrimSpace(UserIDFromContext(ctx))
+	if userID == "" {
+		return QueryScope{}, true, ErrUnauthenticated
+	}
+	documentDefinition, ok := resourceDefinitionFor(ResourceKindDocument)
+	if !ok || query.Entry != nil {
+		return QueryScope{}, false, nil
+	}
+	if (query.Parent.ID == "") != (query.Parent.Kind == "") || (query.Parent.ID != "" && query.Parent.Kind != ResourceKindDataset) {
+		return QueryScope{}, false, nil
+	}
+	datasetDefinition, ok := resourceDefinitionFor(ResourceKindDataset)
+	if !ok {
+		return QueryScope{}, true, ErrInvalidPermission
+	}
+	parentColumn, ok := resourceParentColumn(documentDefinition, ResourceKindDataset)
+	if !ok || documentDefinition.parentAccessOperation == "" {
+		return QueryScope{}, true, ErrInvalidPermission
+	}
+	if query.Parent.ID != "" {
+		if err := p.CheckResource(ctx, query.Parent, documentDefinition.parentAccessOperation); err != nil {
+			return QueryScope{}, true, err
+		}
+	}
+	if _, ok := p.source.(*databaseSource); !ok {
+		return QueryScope{}, false, nil
+	}
+	if query.Operation != OperationRead && query.Operation != OperationUpdate && query.Operation != OperationDeleteContent && query.Operation != OperationRun && query.Operation != OperationUse &&
+		query.Operation != OperationCreate && query.Operation != OperationDelete && query.Operation != OperationShare {
+		return QueryScope{apply: func(db *gorm.DB) *gorm.DB { return db.Where("1 = 0") }}, true, nil
+	}
+	queryTenantID := strings.TrimSpace(query.TenantID)
+	parentID := strings.TrimSpace(query.Parent.ID)
+	operation := query.Operation
+	datasetAccessSQL, datasetValues := communityUserAccessSQL(
+		datasetDefinition, "document_dataset", userID, documentDefinition.parentAccessOperation,
+		datasetDefinition.ownerOperations, datasetDefinition.tenantOperations,
+		datasetDefinition.visibilityColumn, datasetDefinition.tenantValue, datasetDefinition.tenantRequirement,
+	)
+	if datasetAccessSQL == "" {
+		return QueryScope{apply: func(db *gorm.DB) *gorm.DB { return db.Where("1 = 0") }}, true, nil
+	}
+	return QueryScope{apply: func(db *gorm.DB) *gorm.DB {
+		documentTable := documentDefinition.table
+		datasetTable := datasetDefinition.table
+		if documentDefinition.statusColumn != "" {
+			db = db.Where(documentTable+"."+documentDefinition.statusColumn+" = ?", documentDefinition.statusValue)
+		}
+		parentAccessSQL := "EXISTS (SELECT 1 FROM " + datasetTable + " AS document_dataset WHERE document_dataset.id = " + documentTable + "." + parentColumn
+		parentValues := append([]interface{}(nil), datasetValues...)
+		if datasetDefinition.statusColumn != "" {
+			parentAccessSQL += " AND document_dataset." + datasetDefinition.statusColumn + " = ?"
+			parentValues = append([]interface{}{datasetDefinition.statusValue}, parentValues...)
+		}
+		db = db.Where(parentAccessSQL+" AND ("+datasetAccessSQL+"))", parentValues...)
+		if parentID != "" {
+			db = db.Where(clause.Eq{Column: clause.Column{Table: documentTable, Name: parentColumn}, Value: parentID})
+		}
+		if queryTenantID != "" {
+			tenantSQL, tenantValues := resourceFieldEqualsSQL(documentTable, documentDefinition.tenantColumn, documentDefinition.tenantRelation, queryTenantID)
+			if tenantSQL == "" {
+				return db.Where("1 = 0")
+			}
+			db = db.Where(tenantSQL, tenantValues...)
+		}
+		ownerAllowed := containsOperation(datasetDefinition.ownerOperations, operation)
+		tenantAllowed := containsOperation(datasetDefinition.tenantOperations, operation)
+		if ownerAllowed && tenantAllowed {
+			tenantAccess := "EXISTS (SELECT 1 FROM " + datasetTable + " AS document_visibility_dataset JOIN user_tenant AS document_member ON document_member.tenant_id = document_visibility_dataset." + datasetDefinition.tenantColumn + " WHERE document_visibility_dataset.id = " + documentTable + "." + parentColumn
+			if datasetDefinition.visibilityColumn != "" {
+				tenantAccess += " AND document_visibility_dataset." + datasetDefinition.visibilityColumn + " = ?"
+			}
+			tenantAccess += " AND document_member.user_id = ? AND document_member.status = ? AND document_member.role IN ? )"
+			values := []interface{}{userID}
+			if datasetDefinition.visibilityColumn != "" {
+				values = append(values, datasetDefinition.tenantValue)
+			}
+			values = append(values, userID, string(entity.StatusValid), communityTenantRoles(datasetDefinition.tenantRequirement))
+			return db.Where("("+documentTable+"."+documentDefinition.ownerColumn+" = ? OR "+tenantAccess+")", values...)
+		}
+		if ownerAllowed {
+			return db.Where(documentTable+"."+documentDefinition.ownerColumn+" = ?", userID)
+		}
+		return db.Where("1 = 0")
 	}}, true, nil
 }
 
@@ -234,6 +660,9 @@ func (p *communityPolicy) syncTaskQueryScope(ctx context.Context, query ScopeQue
 	if !ok || source.db == nil || tenantRoleMembershipEnabled(source.db) {
 		return QueryScope{}, false, nil
 	}
+	syncTaskDefinition, _ := resourceDefinitionFor(ResourceKindSyncTask)
+	connectorColumn, _ := resourceParentColumn(syncTaskDefinition, ResourceKindConnector)
+	taskConnector := clause.Column{Table: "sync_logs", Name: connectorColumn}
 	if query.Parent.ID == "" && query.Parent.Kind == "" && query.Entry == nil {
 		if query.Operation != OperationRead {
 			return QueryScope{}, false, nil
@@ -242,18 +671,20 @@ func (p *communityPolicy) syncTaskQueryScope(ctx context.Context, query ScopeQue
 		return QueryScope{apply: func(query *gorm.DB) *gorm.DB {
 			ownedConnector := source.db.WithContext(ctx).Model(&entity.Connector{}).
 				Select("1").
-				Where("connector.id = sync_logs.connector_id AND connector.user_id = ?", userID)
+				Where(clause.Eq{Column: clause.Column{Table: "connector", Name: "id"}, Value: taskConnector}).
+				Where("connector.user_id = ?", userID)
 			if tenantID != "" {
 				ownedConnector = ownedConnector.Where("connector.tenant_id = ?", tenantID)
 			}
 			linkedDataset := source.db.WithContext(ctx).Model(&entity.Connector2Kb{}).
 				Select("1").
 				Joins("JOIN knowledgebase ON knowledgebase.id = connector2kb.kb_id").
-				Where("connector2kb.connector_id = sync_logs.connector_id AND connector2kb.kb_id = sync_logs.kb_id")
+				Where(clause.Eq{Column: clause.Column{Table: "connector2kb", Name: "connector_id"}, Value: taskConnector}).
+				Where(clause.Eq{Column: clause.Column{Table: "connector2kb", Name: "kb_id"}, Value: clause.Column{Table: "sync_logs", Name: "kb_id"}})
 			return query.Where("EXISTS (?)", ownedConnector).Where("EXISTS (?)", linkedDataset)
 		}}, true, nil
 	}
-	if query.Parent.Kind != ResourceKindConnector || strings.TrimSpace(query.Parent.ID) == "" ||
+	if _, ok := resourceParentColumn(syncTaskDefinition, query.Parent.Kind); !ok || strings.TrimSpace(query.Parent.ID) == "" ||
 		query.Entry == nil || *query.Entry != query.Parent || !validOperation(query.EntryOp) {
 		return QueryScope{}, false, nil
 	}
@@ -286,8 +717,9 @@ func (p *communityPolicy) syncTaskQueryScope(ctx context.Context, query ScopeQue
 		linkedDataset := source.db.WithContext(ctx).Model(&entity.Connector2Kb{}).
 			Select("1").
 			Joins("JOIN knowledgebase ON knowledgebase.id = connector2kb.kb_id").
-			Where("connector2kb.connector_id = sync_logs.connector_id AND connector2kb.kb_id = sync_logs.kb_id")
-		taskQuery := query.Where("sync_logs.connector_id = ?", parentID).
+			Where(clause.Eq{Column: clause.Column{Table: "connector2kb", Name: "connector_id"}, Value: taskConnector}).
+			Where(clause.Eq{Column: clause.Column{Table: "connector2kb", Name: "kb_id"}, Value: clause.Column{Table: "sync_logs", Name: "kb_id"}})
+		taskQuery := query.Where(clause.Eq{Column: taskConnector, Value: parentID}).
 			Where("EXISTS (?)", connectorAccess).
 			Where("EXISTS (?)", linkedDataset)
 		if operation == OperationRun {
@@ -298,7 +730,9 @@ func (p *communityPolicy) syncTaskQueryScope(ctx context.Context, query ScopeQue
 }
 
 func (p *communityPolicy) chatSessionQueryScope(ctx context.Context, query ScopeQuery) (QueryScope, bool, error) {
-	if query.Parent.Kind != ResourceKindChat || strings.TrimSpace(query.Parent.ID) == "" ||
+	chatSessionDefinition, _ := resourceDefinitionFor(ResourceKindChatSession)
+	parentColumn, hasParent := resourceParentColumn(chatSessionDefinition, query.Parent.Kind)
+	if !hasParent || strings.TrimSpace(query.Parent.ID) == "" ||
 		query.Entry == nil || *query.Entry != query.Parent || !validOperation(query.Operation) || !validOperation(query.EntryOp) {
 		return QueryScope{}, false, nil
 	}
@@ -322,12 +756,13 @@ func (p *communityPolicy) chatSessionQueryScope(ctx context.Context, query Scope
 	return QueryScope{apply: func(query *gorm.DB) *gorm.DB {
 		activeOwnerChat := source.db.WithContext(ctx).Model(&entity.Chat{}).
 			Select("1").
-			Where("dialog.id = conversation.dialog_id AND dialog.id = ? AND dialog.user_id = ? AND dialog.status = ?",
-				parentID, userID, string(entity.StatusValid))
+			Where(clause.Eq{Column: clause.Column{Table: "dialog", Name: "id"}, Value: clause.Column{Table: "conversation", Name: parentColumn}}).
+			Where("dialog.id = ? AND dialog.user_id = ? AND dialog.status = ?", parentID, userID, string(entity.StatusValid))
 		if tenantID != "" {
 			activeOwnerChat = activeOwnerChat.Where("dialog.tenant_id = ?", tenantID)
 		}
-		return query.Where("conversation.dialog_id = ?", parentID).Where("EXISTS (?)", activeOwnerChat)
+		return query.Where(clause.Eq{Column: clause.Column{Table: "conversation", Name: parentColumn}, Value: parentID}).
+			Where("EXISTS (?)", activeOwnerChat)
 	}}, true, nil
 }
 
@@ -353,12 +788,19 @@ func (p *communityPolicy) modelQueryScope(ctx context.Context, query ScopeQuery)
 	if !ok || source.db == nil || tenantRoleMembershipEnabled(source.db) {
 		return QueryScope{}, false, nil
 	}
-	if query.Kind == ResourceKindModelInstance && parent.ID != "" && parent.Kind != ResourceKindModelProvider {
+	definition, ok := resourceDefinitionFor(query.Kind)
+	if !ok {
 		return QueryScope{}, false, nil
 	}
-	if query.Kind == ResourceKindModel && parent.ID != "" && parent.Kind != ResourceKindModelProvider && parent.Kind != ResourceKindModelInstance {
-		return QueryScope{}, false, nil
+	if parent.ID != "" {
+		if _, ok := resourceParentColumn(definition, parent.Kind); !ok {
+			return QueryScope{}, false, nil
+		}
 	}
+	modelInstanceDefinition, _ := resourceDefinitionFor(ResourceKindModelInstance)
+	modelInstanceProviderColumn, _ := resourceParentColumn(modelInstanceDefinition, ResourceKindModelProvider)
+	modelDefinition, _ := resourceDefinitionFor(ResourceKindModel)
+	modelProviderColumn, _ := resourceParentColumn(modelDefinition, ResourceKindModelProvider)
 
 	tenantID := query.TenantID
 	ownerMembership := func(providerAlias string) *gorm.DB {
@@ -413,51 +855,26 @@ func (p *communityPolicy) modelQueryScope(ctx context.Context, query ScopeQuery)
 		}
 		ownerOnly := query.Operation == OperationRead
 		return QueryScope{apply: func(query *gorm.DB) *gorm.DB {
-			return query.Where("EXISTS (?)", providerAccess("tenant_model_instance.provider_id", parent.ID, ownerOnly))
+			return query.Where("EXISTS (?)", providerAccess("tenant_model_instance."+modelInstanceProviderColumn, parent.ID, ownerOnly))
 		}}, true, nil
 	case ResourceKindModel:
 		if query.Operation != OperationRead && query.Operation != OperationUse {
 			return QueryScope{}, false, nil
 		}
 		return QueryScope{apply: func(query *gorm.DB) *gorm.DB {
-			modelQuery := query.Where("EXISTS (?)", providerAccess("tenant_model.provider_id", "", false))
-			switch parent.Kind {
-			case ResourceKindModelProvider:
-				modelQuery = modelQuery.Where("tenant_model.provider_id = ?", parent.ID)
-			case ResourceKindModelInstance:
-				modelQuery = modelQuery.Where("tenant_model.instance_id = ?", parent.ID)
+			modelQuery := query.Where("EXISTS (?)", providerAccess("tenant_model."+modelProviderColumn, "", false))
+			if parent.ID != "" {
+				parentColumn, _ := resourceParentColumn(definition, parent.Kind)
+				modelQuery = modelQuery.Where(clause.Eq{
+					Column: clause.Column{Table: "tenant_model", Name: parentColumn},
+					Value:  parent.ID,
+				})
 			}
 			return modelQuery
 		}}, true, nil
 	default:
 		return QueryScope{}, false, nil
 	}
-}
-
-func (p *communityPolicy) mcpServerReadQueryScope(ctx context.Context, targetTenantID string) (QueryScope, bool, error) {
-	userID := strings.TrimSpace(UserIDFromContext(ctx))
-	if userID == "" {
-		return QueryScope{}, true, ErrUnauthenticated
-	}
-	tenantID := strings.TrimSpace(targetTenantID)
-	if tenantID == "" {
-		tenantID = strings.TrimSpace(TenantIDFromContext(ctx))
-	}
-	if tenantID == "" {
-		return QueryScope{}, true, ErrInvalidPermission
-	}
-	source, ok := p.source.(*databaseSource)
-	if !ok || source.db == nil {
-		return QueryScope{}, false, nil
-	}
-	return QueryScope{apply: func(query *gorm.DB) *gorm.DB {
-		activeMembership := source.db.WithContext(ctx).Model(&entity.UserTenant{}).
-			Select("1").
-			Where("user_tenant.tenant_id = mcp_server.tenant_id AND user_tenant.user_id = ? AND user_tenant.status = ?",
-				userID, string(entity.StatusValid))
-		return query.Where("mcp_server.tenant_id = ? AND mcp_server.user_id = ?", tenantID, userID).
-			Where("EXISTS (?)", activeMembership)
-	}}, true, nil
 }
 
 func (s *databaseSource) validateDatasetTenants(ctx context.Context, userID string) error {
@@ -650,6 +1067,30 @@ func (e *evaluation) resolveResourceForUser(ctx context.Context, userID string, 
 	}
 	if !resource.Active {
 		return Access{}, ErrResourceNotFound
+	}
+	if resource.ParentAccessOperation != "" {
+		if !validOperation(resource.ParentAccessOperation) || len(resource.ParentRefs) == 0 {
+			return Access{}, ErrInvalidPermission
+		}
+		for _, parentRef := range resource.ParentRefs {
+			if err := e.loadResources(ctx, []ResourceRef{parentRef}); err != nil {
+				return Access{}, err
+			}
+			parent, err := e.getResource(parentRef)
+			if err != nil {
+				return Access{}, err
+			}
+			parentAccess, err := e.resolveResourceForUser(ctx, userID, parent)
+			if err != nil {
+				if errorsIsPermissionDenial(err) {
+					return Access{}, ErrPermissionDenied
+				}
+				return Access{}, err
+			}
+			if !parentAccess.Allows(resource.ParentAccessOperation) {
+				return Access{}, ErrPermissionDenied
+			}
+		}
 	}
 	if !validOperations(resource.OwnerOperations) {
 		return Access{}, fmt.Errorf("%w: invalid owner operations", ErrInvalidPermission)

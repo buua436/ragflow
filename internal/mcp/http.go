@@ -51,7 +51,7 @@ func Credential(headers http.Header) string {
 
 // NewHandler authenticates every request and binds legacy SSE sessions to their
 // owner. Wire framing, initialization and dispatch remain SDK responsibilities.
-func NewHandler(resolve func(context.Context, string) (string, error), connector func() Connector, opts Options) *Handler {
+func NewHandler(resolve func(context.Context, string) (string, string, error), connector func() Connector, opts Options) *Handler {
 	lifetime, cancel := context.WithCancel(context.Background())
 	var mu sync.Mutex
 	sessions := make(map[string]sseSession)
@@ -128,12 +128,12 @@ func NewHandler(resolve func(context.Context, string) (string, error), connector
 		defer stop()
 		detach := context.AfterFunc(lifetime, stop)
 		defer detach()
-		userID, err := resolve(ctx, Credential(r.Header))
-		if err != nil || userID == "" {
+		userID, tenantID, err := resolve(ctx, Credential(r.Header))
+		if err != nil || userID == "" || tenantID == "" {
 			http.Error(w, "invalid authorization", http.StatusUnauthorized)
 			return
 		}
-		ctx = permission.WithIdentity(ctx, userID, permission.TenantIDFromContext(ctx))
+		ctx = permission.WithIdentity(ctx, userID, tenantID)
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
 	return &Handler{handler: protected, cancel: cancel}

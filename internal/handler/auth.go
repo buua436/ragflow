@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"net/http"
 	"ragflow/internal/common"
-	"ragflow/internal/entity"
 	"ragflow/internal/permission"
 	"ragflow/internal/server/local"
 	"ragflow/internal/service"
@@ -47,26 +46,26 @@ type AuthHandler struct {
 	userService userTokenResolver
 }
 
-// ResolveMCPUser applies the same API-key and user-token resolution used by
-// the public MCP route, for the standalone native MCP transport.
-func (h *AuthHandler) ResolveMCPUser(ctx context.Context, authorization string) (*entity.User, error) {
+// ResolveMCPIdentity applies the API-key and user-token resolution used by the
+// standalone native MCP transport.
+func (h *AuthHandler) ResolveMCPIdentity(ctx context.Context, authorization string) (*service.AuthIdentity, error) {
 	if authorization == "" {
 		return nil, fmt.Errorf("missing authorization header")
 	}
 	if identity, code, err := h.userService.ResolveAccessToken(ctx, authorization); err == nil && code == common.CodeSuccess {
-		return identity.User, nil
+		return identity, nil
 	}
 	if identity, code, err := h.userService.ResolveAPIToken(ctx, authorization); err == nil && code == common.CodeSuccess {
 		if !billingAllowsAPIToken(ctx, identity.TenantID) {
 			return nil, fmt.Errorf("API key requires a Starter or Pro plan")
 		}
-		return identity.User, nil
+		return identity, nil
 	}
 	if identity, code, err := h.userService.ResolveBetaAPIToken(ctx, authorization); err == nil && code == common.CodeSuccess {
 		if !billingAllowsAPIToken(ctx, identity.TenantID) {
 			return nil, fmt.Errorf("API key requires a Starter or Pro plan")
 		}
-		return identity.User, nil
+		return identity, nil
 	}
 	return nil, fmt.Errorf("invalid authorization")
 }

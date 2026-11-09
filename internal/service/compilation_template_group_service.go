@@ -118,6 +118,9 @@ func (s *CompilationTemplateGroupService) GetSaved(ctx context.Context, groupID 
 // cannot leave a partially-populated group behind.
 func (s *CompilationTemplateGroupService) CreateGroup(ctx context.Context, req *GroupRequest) (*GroupListItem, error) {
 	creatorID := strings.TrimSpace(permission.UserIDFromContext(ctx))
+	if creatorID == "" {
+		return nil, permission.ErrUnauthenticated
+	}
 	tenantID, err := requireCurrentTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -162,6 +165,9 @@ func (s *CompilationTemplateGroupService) CreateGroup(ctx context.Context, req *
 // templates. Mirrors Python update_group(). The field update and child
 // reconciliation are committed atomically.
 func (s *CompilationTemplateGroupService) UpdateGroup(ctx context.Context, groupID string, req *GroupRequest) (*GroupListItem, error) {
+	if strings.TrimSpace(permission.UserIDFromContext(ctx)) == "" {
+		return nil, permission.ErrUnauthenticated
+	}
 	tenantID, err := requireCurrentTenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -417,9 +423,6 @@ func (s *CompilationTemplateGroupService) insertChildren(ctx context.Context, db
 		}
 		valid := string(entity.StatusValid)
 		userID := strings.TrimSpace(permission.UserIDFromContext(ctx))
-		if userID == "" {
-			userID = tenantID
-		}
 		tmpl := &entity.CompilationTemplate{
 			ID:       common.GenerateUUID(),
 			UserID:   userID,
@@ -546,9 +549,6 @@ func (s *CompilationTemplateGroupService) reconcileChildren(ctx context.Context,
 		newID := common.GenerateUUID()
 		valid := string(entity.StatusValid)
 		userID := strings.TrimSpace(permission.UserIDFromContext(ctx))
-		if userID == "" {
-			userID = tenantID
-		}
 		tmpl := &entity.CompilationTemplate{
 			ID:       newID,
 			UserID:   userID,

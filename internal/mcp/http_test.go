@@ -68,11 +68,11 @@ func TestSDKTransportsAndTools(t *testing.T) {
 						return `{"chunks":[],"query_info":{"question":"hello"}}`, nil
 					})
 			}
-			h := NewHandler(func(_ context.Context, key string) (string, error) {
+			h := NewHandler(func(_ context.Context, key string) (string, string, error) {
 				if key == "" || key == "invalid" {
-					return "", fmt.Errorf("denied")
+					return "", "", fmt.Errorf("denied")
 				}
-				return key, nil
+				return key, "tenant-" + key, nil
 			}, factory, Options{true, true, mode == "json"})
 			hs := httptest.NewServer(h)
 			defer hs.Close()
@@ -177,15 +177,16 @@ func TestConnectorPaginationAndNulls(t *testing.T) {
 }
 
 func TestConcurrentTenantsAndSSEOwnership(t *testing.T) {
-	h := NewHandler(func(_ context.Context, key string) (string, error) {
+	h := NewHandler(func(_ context.Context, key string) (string, string, error) {
 		if key != "alice" && key != "bob" {
-			return "", fmt.Errorf("denied")
+			return "", "", fmt.Errorf("denied")
 		}
-		return key, nil
+		return key, "tenant-" + key, nil
 	}, func() Connector {
 		return NewServiceConnector(func(ctx context.Context, _, _ int, _ string, _ bool) ([]map[string]any, int64, error) {
 			user := permission.UserIDFromContext(ctx)
-			return []map[string]any{{"id": user}}, 1, nil
+			tenantID := permission.TenantIDFromContext(ctx)
+			return []map[string]any{{"id": user + "/" + tenantID}}, 1, nil
 		}, func(context.Context, int, int, string, bool) ([]map[string]any, int64, error) {
 			return nil, 0, nil
 		}, nil)
@@ -206,8 +207,9 @@ func TestConcurrentTenantsAndSSEOwnership(t *testing.T) {
 						errs <- err
 						return
 					}
-					if res.IsError || !strings.Contains(res.Content[0].(*sdk.TextContent).Text, expected) {
-						errs <- fmt.Errorf("identity leak: %v", res)
+					text := res.Content[0].(*sdk.TextContent).Text
+					if res.IsError || !strings.Contains(text, expected+"/tenant-"+expected) {
+						errs <- fmt.Errorf("identity leak: %v text=%q", res, text)
 						return
 					}
 				}
@@ -268,7 +270,7 @@ func TestConcurrentTenantsAndSSEOwnership(t *testing.T) {
 
 func TestProtocolErrorsAndCancellation(t *testing.T) {
 	started := make(chan context.Context, 1)
-	h := NewHandler(func(_ context.Context, key string) (string, error) { return key, nil }, func() Connector {
+	h := NewHandler(func(_ context.Context, key string) (string, string, error) { return key, "tenant-1", nil }, func() Connector {
 		return NewServiceConnector(func(context.Context, int, int, string, bool) ([]map[string]any, int64, error) {
 			return nil, 0, nil
 		}, func(context.Context, int, int, string, bool) ([]map[string]any, int64, error) {
@@ -343,7 +345,10 @@ func TestTransportsRejectLoopbackDNSRebinding(t *testing.T) {
 		} {
 			t.Run(path+tc.local+tc.host, func(t *testing.T) {
 				called := false
-				h := NewHandler(func(context.Context, string) (string, error) { called = true; return "", fmt.Errorf("no credentials") }, nil, Options{true, true, true})
+				h := NewHandler(func(context.Context, string) (string, string, error) {
+					called = true
+					return "", "", fmt.Errorf("no credentials")
+				}, nil, Options{true, true, true})
 				defer h.Close()
 				r := httptest.NewRequest(http.MethodGet, "http://"+tc.host+path, nil)
 				r.Header.Set("Origin", "http://"+tc.host)
@@ -363,7 +368,7 @@ func TestTransportsRejectLoopbackDNSRebinding(t *testing.T) {
 }
 
 func BenchmarkMCPLoopbackRequest(b *testing.B) {
-	h := NewHandler(func(context.Context, string) (string, error) { return "user", nil }, nil, Options{true, true, true})
+	h := NewHandler(func(context.Context, string) (string, string, error) { return "user", "tenant", nil }, nil, Options{true, true, true})
 	defer h.Close()
 	r := httptest.NewRequest(http.MethodGet, "http://localhost/unknown", nil)
 	r = r.WithContext(context.WithValue(r.Context(), http.LocalAddrContextKey, &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 9382}))

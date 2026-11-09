@@ -1367,22 +1367,15 @@ func (s *MemoryService) filterAccessibleMemories(ctx context.Context, memoryIDs 
 		return []*entity.Memory{}, nil
 	}
 
-	refs := make([]permission.ResourceRef, 0, len(memoryIDs))
-	for _, memoryID := range memoryIDs {
-		refs = append(refs, permission.ResourceRef{Kind: permission.ResourceKindMemory, ID: memoryID})
-	}
-	accessible, err := permission.NewDatabaseChecker(s.db).FilterResources(ctx, refs, permission.OperationUse)
+	scope, err := permission.NewDatabaseChecker(s.db).QueryScope(ctx, permission.ScopeQuery{
+		Kind:      permission.ResourceKindMemory,
+		Operation: permission.OperationUse,
+	})
 	if err != nil {
 		return nil, err
 	}
-	accessibleIDs := make([]string, 0, len(accessible))
-	for _, ref := range accessible {
-		accessibleIDs = append(accessibleIDs, ref.ID)
-	}
-	if len(accessibleIDs) == 0 {
-		return []*entity.Memory{}, nil
-	}
-	return s.memoryDAO.GetByIDs(ctx, s.db, accessibleIDs)
+	query := scope.Apply(s.db.WithContext(ctx).Model(&entity.Memory{}))
+	return s.memoryDAO.GetByIDs(ctx, query, memoryIDs)
 }
 
 func splitFilterValues(values interface{}) []string {

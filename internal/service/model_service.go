@@ -160,38 +160,28 @@ func (m *ModelProviderService) ListProvidersOfTenant(ctx context.Context) ([]map
 		code, normalizedErr := permissionresponse.NormalizeHidden(err)
 		return nil, code, normalizedErr
 	}
-	providerRows, err := m.modelProviderDAO.ListByTenantIDAndUserID(ctx, dao.DB, ownedTenantID, userID)
-	if err != nil {
-		return nil, common.CodeServerError, err
-	}
-	providerRefs := make([]permission.ResourceRef, 0, len(providerRows))
-	providerByID := make(map[string]*entity.TenantModelProvider, len(providerRows))
-	for _, provider := range providerRows {
-		providerRefs = append(providerRefs, permission.ResourceRef{Kind: permission.ResourceKindModelProvider, ID: provider.ID})
-		providerByID[provider.ID] = provider
-	}
-	accessibleProviders, err := permission.NewDatabaseChecker(dao.DB).FilterResources(
-		ctx,
-
-		providerRefs,
-		permission.OperationRead,
-	)
+	checker := permission.NewDatabaseChecker(dao.DB)
+	providerScope, err := checker.QueryScope(ctx, permission.ScopeQuery{
+		Kind:      permission.ResourceKindModelProvider,
+		Operation: permission.OperationRead,
+	})
 	if err != nil {
 		code, normalizedErr := permissionresponse.NormalizeHidden(err)
 		return nil, code, normalizedErr
+	}
+	providerQuery := providerScope.Apply(dao.DB.WithContext(ctx).Model(&entity.TenantModelProvider{}))
+	providerRows, err := m.modelProviderDAO.ListByTenantIDAndUserID(ctx, providerQuery, ownedTenantID, userID)
+	if err != nil {
+		return nil, common.CodeServerError, err
 	}
 
 	type listedProvider struct {
 		id   string
 		info map[string]interface{}
 	}
-	listed := make([]listedProvider, 0, len(accessibleProviders))
-	seenProviderNames := make(map[string]struct{}, len(accessibleProviders))
-	for _, providerRef := range accessibleProviders {
-		providerRow := providerByID[providerRef.ID]
-		if providerRow == nil {
-			continue
-		}
+	listed := make([]listedProvider, 0, len(providerRows))
+	seenProviderNames := make(map[string]struct{}, len(providerRows))
+	for _, providerRow := range providerRows {
 		providerName := providerRow.ProviderName
 		// Mirror Python's list_providers tenant branch: silently skip system-excluded
 		// factory names (e.g. "Builtin", "Youdao", "FastEmbed", "BAAI",
@@ -1033,7 +1023,19 @@ func (m *ModelProviderService) ListProviderInstances(ctx context.Context, provid
 		}
 		return nil, common.CodeServerError, err
 	}
-	instances, err := m.modelInstanceDAO.GetAllInstancesByProviderID(ctx, dao.DB, provider.ID)
+	checker := permission.NewDatabaseChecker(dao.DB)
+	providerRef := permission.ResourceRef{Kind: permission.ResourceKindModelProvider, ID: provider.ID}
+	instanceScope, err := checker.QueryScope(ctx, permission.ScopeQuery{
+		Kind:      permission.ResourceKindModelInstance,
+		Parent:    providerRef,
+		Operation: permission.OperationRead,
+	})
+	if err != nil {
+		code, normalizedErr := permissionresponse.NormalizeHidden(err)
+		return nil, code, normalizedErr
+	}
+	instanceQuery := instanceScope.Apply(dao.DB.WithContext(ctx).Model(&entity.TenantModelInstance{}))
+	instances, err := m.modelInstanceDAO.GetAllInstancesByProviderID(ctx, instanceQuery, provider.ID)
 	if err != nil {
 		return nil, common.CodeServerError, err
 	}
@@ -1041,7 +1043,6 @@ func (m *ModelProviderService) ListProviderInstances(ctx context.Context, provid
 	for _, instance := range instances {
 		instanceRefs = append(instanceRefs, permission.ResourceRef{Kind: permission.ResourceKindModelInstance, ID: instance.ID})
 	}
-	checker := permission.NewDatabaseChecker(dao.DB)
 	instanceAccesses, err := checker.ResolveAccesses(ctx, instanceRefs)
 	if err != nil {
 		code, normalizedErr := permissionresponse.NormalizeHidden(err)
@@ -2687,27 +2688,25 @@ func (m *ModelProviderService) ListInstanceModels(ctx context.Context, providerN
 		return nil, normalizedErr
 	}
 
-	// Get all models for this instance
-	modelObjs, err := m.modelDAO.GetModelsByInstanceID(ctx, dao.DB, instance.ID)
-	if err != nil {
-		return nil, err
-	}
-	modelRefs := make([]permission.ResourceRef, 0, len(modelObjs))
-	for _, model := range modelObjs {
-		modelRefs = append(modelRefs, permission.ResourceRef{Kind: permission.ResourceKindModel, ID: model.ID})
-	}
-	resourceAccesses, err := permission.NewDatabaseChecker(dao.DB).ResolveAccesses(ctx, modelRefs)
+	checker := permission.NewDatabaseChecker(dao.DB)
+	instanceRef := permission.ResourceRef{Kind: permission.ResourceKindModelInstance, ID: instance.ID}
+	modelScope, err := checker.QueryScope(ctx, permission.ScopeQuery{
+		Kind:      permission.ResourceKindModel,
+		Parent:    instanceRef,
+		Operation: permission.OperationRead,
+	})
 	if err != nil {
 		_, normalizedErr := permissionresponse.NormalizeHidden(err)
 		return nil, normalizedErr
 	}
+	modelQuery := modelScope.Apply(dao.DB.WithContext(ctx).Model(&entity.TenantModel{}))
+	modelObjs, err := m.modelDAO.GetModelsByInstanceID(ctx, modelQuery, instance.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	modelList := make([]map[string]interface{}, 0, len(modelObjs))
 	for _, model := range modelObjs {
-		access, ok := resourceAccesses[permission.ResourceRef{Kind: permission.ResourceKindModel, ID: model.ID}]
-		if !ok || !access.Allows(permission.OperationRead) {
-			continue
-		}
 		modelExtra := make(map[string]interface{})
 		if model.Extra != "" {
 			_ = json.Unmarshal([]byte(model.Extra), &modelExtra)

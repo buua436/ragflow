@@ -176,13 +176,15 @@ const (
 // independent facts: the resource tenant, creator, and permission owner need
 // not be the same identity.
 type Resource struct {
-	Ref               ResourceRef
-	TenantID          string
-	CreatedBy         string
-	OwnerUserID       string
-	Visibility        Visibility
-	TenantRequirement TenantRequirement
-	OwnerOperations   []Operation
+	Ref                   ResourceRef
+	TenantID              string
+	CreatedBy             string
+	OwnerUserID           string
+	ParentRefs            []ResourceRef
+	ParentAccessOperation Operation
+	Visibility            Visibility
+	TenantRequirement     TenantRequirement
+	OwnerOperations       []Operation
 	// TenantOperations overrides OwnerOperations for tenant members when set.
 	TenantOperations []Operation
 	// CreatorOperations grants extra operations to CreatedBy after tenant access is verified.
@@ -239,8 +241,8 @@ type resourceScope struct {
 
 // ScopeQuery describes the candidate resource set and optional execution entry.
 type ScopeQuery struct {
-	// TenantID optionally selects a tenant boundary for the query. It does not
-	// change the authenticated identity carried by the context.
+	// TenantID optionally narrows the query to one tenant. It does not set or
+	// replace the authenticated identity carried by the context.
 	TenantID string
 	// TenantIDs and OwnerUserIDs are caller-supplied list filters. They can only
 	// narrow the authorization scope returned by QueryScope.
@@ -361,9 +363,8 @@ func (c *Checker) scope(ctx context.Context, query ScopeQuery) (resourceScope, e
 }
 
 // QueryScope returns a database-applied authorization predicate for a resource
-// query. Policies may compile the authorization rules into SQL. When they do
-// not, the checker falls back to the existing authorized-ID scope and applies
-// those IDs as an IN predicate.
+// query. Database-backed policies must compile authorization into SQL. Other
+// policy sources may fall back to their authorized resource IDs.
 func (c *Checker) QueryScope(ctx context.Context, query ScopeQuery) (QueryScope, error) {
 	if c == nil || c.policy == nil {
 		return QueryScope{}, ErrSourceUnavailable
@@ -377,9 +378,6 @@ func (c *Checker) QueryScope(ctx context.Context, query ScopeQuery) (QueryScope,
 		return QueryScope{}, ErrIdentityMismatch
 	}
 	query.TenantID = tenantID
-	if contextTenantID == "" && tenantID != "" {
-		ctx = WithTenantID(ctx, tenantID)
-	}
 	filters, err := queryFilterScope(query)
 	if err != nil {
 		return QueryScope{}, err
@@ -392,6 +390,9 @@ func (c *Checker) QueryScope(ctx context.Context, query ScopeQuery) (QueryScope,
 		if supported {
 			return queryScope.and(filters), nil
 		}
+	}
+	if nativePolicy, ok := c.policy.(interface{ nativeQueryScopeRequired() bool }); ok && nativePolicy.nativeQueryScopeRequired() {
+		return QueryScope{}, ErrInvalidPermission
 	}
 
 	scope, err := c.policy.scope(ctx, query)

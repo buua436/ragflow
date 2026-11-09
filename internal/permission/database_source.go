@@ -159,63 +159,36 @@ func (s *databaseSource) GetResources(ctx context.Context, refs []ResourceRef) (
 		return nil, ErrSourceUnavailable
 	}
 	refs = uniqueRefs(refs)
-	datasetIDs := make([]string, 0, len(refs))
-	documentIDs := make([]string, 0, len(refs))
-	canvasIDs := make([]string, 0, len(refs))
-	agentSessionIDs := make([]string, 0, len(refs))
-	memoryIDs := make([]string, 0, len(refs))
-	fileIDs := make([]string, 0, len(refs))
-	searchAppIDs := make([]string, 0, len(refs))
-	chatIDs := make([]string, 0, len(refs))
-	chatSessionIDs := make([]string, 0, len(refs))
-	chatChannelIDs := make([]string, 0, len(refs))
-	connectorIDs := make([]string, 0, len(refs))
-	syncTaskIDs := make([]string, 0, len(refs))
-	modelProviderIDs := make([]string, 0, len(refs))
-	modelInstanceIDs := make([]string, 0, len(refs))
-	tenantModelIDs := make([]string, 0, len(refs))
-	mcpServerIDs := make([]string, 0, len(refs))
-	skillSpaceIDs := make([]string, 0, len(refs))
+	idsByLoadGroup := make(map[ResourceKind][]string, len(resourceDirectory))
 	for _, ref := range refs {
-		switch ref.Kind {
-		case ResourceKindDataset:
-			datasetIDs = append(datasetIDs, ref.ID)
-		case ResourceKindDocument:
-			documentIDs = append(documentIDs, ref.ID)
-		case ResourceKindCanvas:
-			canvasIDs = append(canvasIDs, ref.ID)
-		case ResourceKindAgentSession:
-			agentSessionIDs = append(agentSessionIDs, ref.ID)
-		case ResourceKindMemory:
-			memoryIDs = append(memoryIDs, ref.ID)
-		case ResourceKindFile, ResourceKindFolder:
-			fileIDs = append(fileIDs, ref.ID)
-		case ResourceKindSearchApp:
-			searchAppIDs = append(searchAppIDs, ref.ID)
-		case ResourceKindChat:
-			chatIDs = append(chatIDs, ref.ID)
-		case ResourceKindChatSession:
-			chatSessionIDs = append(chatSessionIDs, ref.ID)
-		case ResourceKindChatChannel:
-			chatChannelIDs = append(chatChannelIDs, ref.ID)
-		case ResourceKindConnector:
-			connectorIDs = append(connectorIDs, ref.ID)
-		case ResourceKindSyncTask:
-			syncTaskIDs = append(syncTaskIDs, ref.ID)
-		case ResourceKindModelProvider:
-			modelProviderIDs = append(modelProviderIDs, ref.ID)
-		case ResourceKindModelInstance:
-			modelInstanceIDs = append(modelInstanceIDs, ref.ID)
-		case ResourceKindModel:
-			tenantModelIDs = append(tenantModelIDs, ref.ID)
-		case ResourceKindMCPServer:
-			mcpServerIDs = append(mcpServerIDs, ref.ID)
-		case ResourceKindSkillSpace:
-			skillSpaceIDs = append(skillSpaceIDs, ref.ID)
-		default:
+		definition, ok := resourceDefinitionFor(ref.Kind)
+		if !ok {
 			return nil, fmt.Errorf("%w: unsupported resource kind %q", ErrInvalidPermission, ref.Kind)
 		}
+		loadGroup := definition.loadGroup
+		if loadGroup == "" {
+			loadGroup = ref.Kind
+		}
+		idsByLoadGroup[loadGroup] = append(idsByLoadGroup[loadGroup], ref.ID)
 	}
+	idsFor := func(loadGroup ResourceKind) []string { return idsByLoadGroup[loadGroup] }
+	datasetIDs := idsFor(ResourceKindDataset)
+	documentIDs := idsFor(ResourceKindDocument)
+	canvasIDs := idsFor(ResourceKindCanvas)
+	agentSessionIDs := idsFor(ResourceKindAgentSession)
+	memoryIDs := idsFor(ResourceKindMemory)
+	fileIDs := idsFor(ResourceKindFile)
+	searchAppIDs := idsFor(ResourceKindSearchApp)
+	chatIDs := idsFor(ResourceKindChat)
+	chatSessionIDs := idsFor(ResourceKindChatSession)
+	chatChannelIDs := idsFor(ResourceKindChatChannel)
+	connectorIDs := idsFor(ResourceKindConnector)
+	syncTaskIDs := idsFor(ResourceKindSyncTask)
+	modelProviderIDs := idsFor(ResourceKindModelProvider)
+	modelInstanceIDs := idsFor(ResourceKindModelInstance)
+	tenantModelIDs := idsFor(ResourceKindModel)
+	mcpServerIDs := idsFor(ResourceKindMCPServer)
+	skillSpaceIDs := idsFor(ResourceKindSkillSpace)
 	agentSessionsByID, err := s.loadAgentSessions(ctx, agentSessionIDs)
 	if err != nil {
 		return nil, err
@@ -334,139 +307,27 @@ func (s *databaseSource) GetResources(ctx context.Context, refs []ResourceRef) (
 	if err != nil {
 		return nil, err
 	}
+	facts := resourceFacts{
+		datasetsByID: datasetsByID, documentsByID: documentsByID, canvasesByID: canvasesByID,
+		agentSessionsByID: agentSessionsByID, chatSessionsByID: chatSessionsByID, memoriesByID: memoriesByID,
+		filesByID: filesByID, fileDatasetIDs: fileDatasetIDs, linkedDatasetsByID: linkedDatasetsByID,
+		searchAppsByID: searchAppsByID, chatsByID: chatsByID, chatChannelsByID: chatChannelsByID,
+		connectorsByID: connectorsByID, syncTasksByID: syncTasksByID, syncTaskMappings: syncTaskMappings,
+		modelProvidersByID: modelProvidersByID, modelInstancesByID: modelInstancesByID, tenantModelsByID: tenantModelsByID,
+		mcpServersByID: mcpServersByID, skillSpacesByID: skillSpacesByID, skillSpaceFoldersByID: skillSpaceFoldersByID,
+	}
 	resources := make([]Resource, 0, len(refs))
 	for _, ref := range refs {
-		switch ref.Kind {
-		case ResourceKindDataset:
-			if dataset, ok := datasetsByID[ref.ID]; ok {
-				resources = append(resources, datasetResource(dataset))
-			}
-		case ResourceKindDocument:
-			if document, documentExists := documentsByID[ref.ID]; documentExists {
-				if dataset, datasetExists := datasetsByID[document.KbID]; datasetExists {
-					resources = append(resources, documentResource(document, dataset))
-				}
-			}
-		case ResourceKindCanvas:
-			if canvas, ok := canvasesByID[ref.ID]; ok {
-				resources = append(resources, canvasResource(canvas))
-			}
-		case ResourceKindAgentSession:
-			session, ok := agentSessionsByID[ref.ID]
-			if !ok {
-				continue
-			}
-			canvas, ok := canvasesByID[session.DialogID]
-			if !ok {
-				continue
-			}
-			resources = append(resources, agentSessionResource(session, canvas))
-		case ResourceKindMemory:
-			if memory, ok := memoriesByID[ref.ID]; ok {
-				resources = append(resources, memoryResource(memory))
-			}
-		case ResourceKindFile, ResourceKindFolder:
-			file, ok := filesByID[ref.ID]
-			if !ok || (ref.Kind == ResourceKindFolder) != (file.Type == "folder") {
-				continue
-			}
-			resources = append(resources, fileResource(ref.Kind, file, fileDatasetIDs[ref.ID], linkedDatasetsByID))
-		case ResourceKindSearchApp:
-			if searchApp, ok := searchAppsByID[ref.ID]; ok {
-				resources = append(resources, searchAppResource(searchApp))
-			}
-		case ResourceKindChat:
-			if chat, ok := chatsByID[ref.ID]; ok {
-				resources = append(resources, chatResource(chat))
-			}
-		case ResourceKindChatChannel:
-			if channel, ok := chatChannelsByID[ref.ID]; ok {
-				resources = append(resources, chatChannelResource(channel))
-			}
-		case ResourceKindChatSession:
-			session, ok := chatSessionsByID[ref.ID]
-			if !ok {
-				continue
-			}
-			chat, ok := chatsByID[session.DialogID]
-			if !ok {
-				continue
-			}
-			resources = append(resources, chatSessionResource(session, chat))
-		case ResourceKindConnector:
-			if connector, ok := connectorsByID[ref.ID]; ok {
-				resources = append(resources, connectorResource(connector))
-			}
-		case ResourceKindSyncTask:
-			task, ok := syncTasksByID[ref.ID]
-			if !ok {
-				continue
-			}
-			connector, ok := connectorsByID[task.ConnectorID]
-			if !ok {
-				continue
-			}
-			_, linked := syncTaskMappings[connectorDatasetRef{connectorID: task.ConnectorID, datasetID: task.KbID}]
-			resources = append(resources, syncTaskResource(task, connector, linked))
-		case ResourceKindModelProvider:
-			if provider, ok := modelProvidersByID[ref.ID]; ok {
-				if strings.TrimSpace(provider.UserID) == "" {
-					return nil, fmt.Errorf("%w: model provider %q has no owner user_id", ErrInvalidPermission, provider.ID)
-				}
-				resources = append(resources, modelProviderResource(provider))
-			}
-		case ResourceKindModelInstance:
-			instance, ok := modelInstancesByID[ref.ID]
-			if !ok {
-				continue
-			}
-			provider, ok := modelProvidersByID[instance.ProviderID]
-			if !ok {
-				continue
-			}
-			if strings.TrimSpace(provider.UserID) == "" {
-				return nil, fmt.Errorf("%w: model provider %q has no owner user_id", ErrInvalidPermission, provider.ID)
-			}
-			resources = append(resources, modelInstanceResource(instance, provider))
-		case ResourceKindModel:
-			model, ok := tenantModelsByID[ref.ID]
-			if !ok {
-				continue
-			}
-			instance, ok := modelInstancesByID[model.InstanceID]
-			if !ok || instance.ProviderID != model.ProviderID {
-				continue
-			}
-			provider, ok := modelProvidersByID[model.ProviderID]
-			if !ok {
-				continue
-			}
-			if strings.TrimSpace(provider.UserID) == "" {
-				return nil, fmt.Errorf("%w: model provider %q has no owner user_id", ErrInvalidPermission, provider.ID)
-			}
-			resources = append(resources, tenantModelResource(model, provider))
-		case ResourceKindMCPServer:
-			server, ok := mcpServersByID[ref.ID]
-			if !ok {
-				continue
-			}
-			if strings.TrimSpace(server.UserID) == "" {
-				return nil, fmt.Errorf("%w: MCP server %q has no owner user_id", ErrInvalidPermission, ref.ID)
-			}
-			resources = append(resources, mcpServerResource(ref.ID, server.TenantID, server.UserID))
-		case ResourceKindSkillSpace:
-			space, ok := skillSpacesByID[ref.ID]
-			if !ok {
-				continue
-			}
-			folder, ok := skillSpaceFoldersByID[space.FolderID]
-			if !ok || folder.TenantID != space.TenantID || folder.Type != "folder" {
-				continue
-			}
-			if strings.TrimSpace(space.UserID) == "" {
-				return nil, fmt.Errorf("%w: skill space %q has no owner user_id", ErrInvalidPermission, space.ID)
-			}
-			resources = append(resources, skillSpaceResource(space.ID, space.TenantID, space.UserID))
+		definition, ok := resourceDefinitionFor(ref.Kind)
+		if !ok || definition.build == nil {
+			return nil, fmt.Errorf("%w: unsupported resource kind %q", ErrInvalidPermission, ref.Kind)
+		}
+		resource, include, err := definition.build(ref, &facts)
+		if err != nil {
+			return nil, err
+		}
+		if include {
+			resources = append(resources, resource)
 		}
 	}
 	return resources, nil
@@ -476,303 +337,14 @@ func (s *databaseSource) ListResourceRefs(ctx context.Context, kind ResourceKind
 	if s == nil || s.db == nil {
 		return nil, ErrSourceUnavailable
 	}
-	userID := UserIDFromContext(ctx)
-	var ids []string
-	switch kind {
-	case ResourceKindDataset:
-		if parent.ID != "" || parent.Kind != "" {
-			return nil, fmt.Errorf("%w: datasets cannot have a parent scope", ErrInvalidPermission)
-		}
-		tenantIDs, err := s.tenantIDsForCurrentUser(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(tenantIDs) == 0 {
-			return []ResourceRef{}, nil
-		}
-		err = s.db.WithContext(ctx).Model(&entity.Knowledgebase{}).
-			Where("tenant_id IN ? AND status = ?", tenantIDs, string(entity.StatusValid)).
-			Pluck("id", &ids).Error
-		if err != nil {
-			return nil, err
-		}
-	case ResourceKindDocument:
-		if parent.Kind != ResourceKindDataset || strings.TrimSpace(parent.ID) == "" {
-			return nil, fmt.Errorf("%w: documents require a dataset parent scope", ErrInvalidPermission)
-		}
-		if err := s.db.WithContext(ctx).Model(&entity.Document{}).
-			Where("kb_id = ? AND status = ?", parent.ID, string(entity.StatusValid)).
-			Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindCanvas:
-		if parent.ID != "" || parent.Kind != "" {
-			return nil, fmt.Errorf("%w: canvases cannot have a parent scope", ErrInvalidPermission)
-		}
-		tenantIDs, err := s.activeTenantIDsForUser(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		ownerIDs := append(append(make([]string, 0, len(tenantIDs)+1), tenantIDs...), userID)
-		if err := s.db.WithContext(ctx).Model(&entity.UserCanvas{}).
-			Where("user_id IN ? OR tenant_id IN ?", ownerIDs, tenantIDs).
-			Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindAgentSession:
-		if parent.Kind != ResourceKindCanvas || strings.TrimSpace(parent.ID) == "" {
-			return nil, fmt.Errorf("%w: agent sessions require a canvas parent scope", ErrInvalidPermission)
-		}
-		if err := s.db.WithContext(ctx).Model(&entity.API4Conversation{}).
-			Where("dialog_id = ?", parent.ID).
-			Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindMemory:
-		if parent.ID != "" || parent.Kind != "" {
-			return nil, fmt.Errorf("%w: memories cannot have a parent scope", ErrInvalidPermission)
-		}
-		tenantIDs, err := s.tenantIDsForCurrentUser(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(tenantIDs) == 0 {
-			return []ResourceRef{}, nil
-		}
-		if err := s.db.WithContext(ctx).Model(&entity.Memory{}).
-			Where("tenant_id IN ?", tenantIDs).
-			Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindFile, ResourceKindFolder:
-		if parent.Kind != ResourceKindFolder || strings.TrimSpace(parent.ID) == "" {
-			return nil, fmt.Errorf("%w: files and folders require a folder parent scope", ErrInvalidPermission)
-		}
-		parentQuery := s.db.WithContext(ctx).Model(&entity.File{}).
-			Where("id = ? AND type = ?", parent.ID, "folder")
-		var parentFile entity.File
-		if err := parentQuery.First(&parentFile).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return []ResourceRef{}, nil
-			}
-			return nil, err
-		}
-		query := s.db.WithContext(ctx).Model(&entity.File{}).
-			Select("id").
-			Where("tenant_id = ? AND parent_id = ? AND id <> ?", parentFile.TenantID, parentFile.ID, parentFile.ID)
-		if kind == ResourceKindFolder {
-			query = query.Where("type = ?", "folder")
-		} else {
-			query = query.Where("type <> ?", "folder")
-		}
-		if err := query.Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindSearchApp:
-		if parent.ID != "" || parent.Kind != "" {
-			return nil, fmt.Errorf("%w: search apps cannot have a parent scope", ErrInvalidPermission)
-		}
-		tenantIDs, err := s.tenantIDsForCurrentUser(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(tenantIDs) == 0 {
-			return []ResourceRef{}, nil
-		}
-		if err := s.db.WithContext(ctx).Model(&entity.Search{}).
-			Where("status = ? AND tenant_id IN ?", string(entity.StatusValid), tenantIDs).
-			Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindChat:
-		if parent.ID != "" || parent.Kind != "" {
-			return nil, fmt.Errorf("%w: chats cannot have a parent scope", ErrInvalidPermission)
-		}
-		tenantIDs, err := s.tenantIDsForCurrentUser(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(tenantIDs) == 0 {
-			return []ResourceRef{}, nil
-		}
-		if err := s.db.WithContext(ctx).Model(&entity.Chat{}).
-			Where("tenant_id IN ? AND status = ?", tenantIDs, string(entity.StatusValid)).
-			Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindChatSession:
-		if parent.Kind != ResourceKindChat || strings.TrimSpace(parent.ID) == "" {
-			return nil, fmt.Errorf("%w: chat sessions require a chat parent scope", ErrInvalidPermission)
-		}
-		var chatCount int64
-		if err := s.db.WithContext(ctx).Model(&entity.Chat{}).
-			Where("id = ? AND status = ?", parent.ID, string(entity.StatusValid)).
-			Count(&chatCount).Error; err != nil {
-			return nil, err
-		}
-		if chatCount == 0 {
-			return []ResourceRef{}, nil
-		}
-		if err := s.db.WithContext(ctx).Model(&entity.ChatSession{}).
-			Where("dialog_id = ?", parent.ID).
-			Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindChatChannel:
-		if parent.ID != "" || parent.Kind != "" {
-			return nil, fmt.Errorf("%w: chat channels cannot have a parent scope", ErrInvalidPermission)
-		}
-		tenantIDs, err := s.tenantIDsForCurrentUser(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(tenantIDs) == 0 {
-			return []ResourceRef{}, nil
-		}
-		if err := s.db.WithContext(ctx).Model(&entity.ChatChannel{}).
-			Where("tenant_id IN ?", tenantIDs).
-			Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindConnector:
-		if parent.ID != "" || parent.Kind != "" {
-			return nil, fmt.Errorf("%w: connectors cannot have a parent scope", ErrInvalidPermission)
-		}
-		var tenantIDs []string
-		if err := s.db.WithContext(ctx).Model(&entity.UserTenant{}).
-			Distinct("tenant_id").
-			Where("user_id = ? AND status = ?", userID, string(entity.StatusValid)).
-			Pluck("tenant_id", &tenantIDs).Error; err != nil {
-			return nil, err
-		}
-		if len(tenantIDs) == 0 {
-			return []ResourceRef{}, nil
-		}
-		if err := s.db.WithContext(ctx).Model(&entity.Connector{}).
-			Where("tenant_id IN ?", tenantIDs).
-			Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindSyncTask:
-		if (parent.ID == "") != (parent.Kind == "") || (parent.ID != "" && parent.Kind != ResourceKindConnector) {
-			return nil, fmt.Errorf("%w: sync task parent must be a connector", ErrInvalidPermission)
-		}
-		tenantID := strings.TrimSpace(TenantIDFromContext(ctx))
-		if tenantID == "" {
-			return nil, ErrInvalidPermission
-		}
-		query := s.db.WithContext(ctx).Model(&entity.SyncLogs{}).
-			Select("sync_logs.id").
-			Joins("JOIN connector ON connector.id = sync_logs.connector_id").
-			Where("connector.tenant_id = ?", tenantID).
-			Where("EXISTS (SELECT 1 FROM connector2kb JOIN knowledgebase ON knowledgebase.id = connector2kb.kb_id WHERE connector2kb.connector_id = sync_logs.connector_id AND connector2kb.kb_id = sync_logs.kb_id)")
-		if parent.ID != "" {
-			query = query.Where("sync_logs.connector_id = ?", parent.ID)
-		}
-		if err := query.Pluck("sync_logs.id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindModelProvider:
-		if parent.ID != "" || parent.Kind != "" {
-			return nil, fmt.Errorf("%w: model providers cannot have a parent scope", ErrInvalidPermission)
-		}
-		tenantIDs, err := s.tenantIDsForCurrentUser(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(tenantIDs) == 0 {
-			return []ResourceRef{}, nil
-		}
-		if err := s.db.WithContext(ctx).Model(&entity.TenantModelProvider{}).
-			Where("tenant_id IN ?", tenantIDs).
-			Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindModelInstance:
-		if (parent.ID != "" && parent.Kind != ResourceKindModelProvider) || (parent.ID == "" && parent.Kind != "") {
-			return nil, fmt.Errorf("%w: model instances require a model provider parent", ErrInvalidPermission)
-		}
-		query := s.db.WithContext(ctx).Model(&entity.TenantModelInstance{}).Select("tenant_model_instance.id")
-		if parent.ID != "" {
-			query = query.Where("tenant_model_instance.provider_id = ?", parent.ID)
-		} else {
-			tenantIDs, err := s.tenantIDsForCurrentUser(ctx)
-			if err != nil {
-				return nil, err
-			}
-			if len(tenantIDs) == 0 {
-				return []ResourceRef{}, nil
-			}
-			query = query.Joins("JOIN tenant_model_provider ON tenant_model_provider.id = tenant_model_instance.provider_id").
-				Where("tenant_model_provider.tenant_id IN ?", tenantIDs)
-		}
-		if err := query.Pluck("tenant_model_instance.id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindModel:
-		switch parent.Kind {
-		case "":
-			if parent.ID != "" {
-				return nil, fmt.Errorf("%w: model parent kind is required", ErrInvalidPermission)
-			}
-		case ResourceKindModelProvider, ResourceKindModelInstance:
-			if strings.TrimSpace(parent.ID) == "" {
-				return nil, fmt.Errorf("%w: model parent ID is required", ErrInvalidPermission)
-			}
-		default:
-			return nil, fmt.Errorf("%w: models require a model provider or model instance parent", ErrInvalidPermission)
-		}
-		query := s.db.WithContext(ctx).Model(&entity.TenantModel{}).Select("tenant_model.id")
-		switch parent.Kind {
-		case ResourceKindModelProvider:
-			query = query.Where("tenant_model.provider_id = ?", parent.ID)
-		case ResourceKindModelInstance:
-			query = query.Where("tenant_model.instance_id = ?", parent.ID)
-		default:
-			tenantIDs, err := s.tenantIDsForCurrentUser(ctx)
-			if err != nil {
-				return nil, err
-			}
-			if len(tenantIDs) == 0 {
-				return []ResourceRef{}, nil
-			}
-			query = query.Joins("JOIN tenant_model_provider ON tenant_model_provider.id = tenant_model.provider_id").
-				Where("tenant_model_provider.tenant_id IN ?", tenantIDs)
-		}
-		if err := query.Pluck("tenant_model.id", &ids).Error; err != nil {
-			return nil, err
-		}
-	case ResourceKindMCPServer, ResourceKindSkillSpace:
-		if parent.ID != "" || parent.Kind != "" {
-			return nil, fmt.Errorf("%w: %s resources cannot have a parent scope", ErrInvalidPermission, kind)
-		}
-		tenantIDs, err := s.tenantIDsForCurrentUser(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if len(tenantIDs) == 0 {
-			return []ResourceRef{}, nil
-		}
-		var query *gorm.DB
-		if kind == ResourceKindMCPServer {
-			query = s.db.WithContext(ctx).Model(&entity.MCPServer{}).
-				Where("tenant_id IN ?", tenantIDs)
-		} else {
-			query = s.db.WithContext(ctx).Model(&entity.SkillSpace{}).
-				Where("tenant_id IN ? AND status = ?", tenantIDs, entity.SpaceStatusActive)
-		}
-		if err := query.Pluck("id", &ids).Error; err != nil {
-			return nil, err
-		}
-	default:
+	definition, ok := resourceDefinitionFor(kind)
+	if !ok || definition.list == nil {
 		return nil, fmt.Errorf("%w: unsupported scope resource kind %q", ErrInvalidPermission, kind)
 	}
-
-	refs := make([]ResourceRef, 0, len(ids))
-	for _, id := range ids {
-		refs = append(refs, ResourceRef{Kind: kind, ID: id})
+	if err := validateResourceParent(kind, parent, definition); err != nil {
+		return nil, err
 	}
-	return refs, nil
+	return definition.list(s, ctx, kind, parent, definition)
 }
 
 func (s *databaseSource) loadConnectors(ctx context.Context, ids []string) (map[string]*entity.Connector, error) {
@@ -1076,16 +648,18 @@ func datasetResource(dataset *entity.Knowledgebase) Resource {
 func documentResource(document *entity.Document, dataset *entity.Knowledgebase) Resource {
 	datasetAccess := datasetResource(dataset)
 	return Resource{
-		Ref:               ResourceRef{Kind: ResourceKindDocument, ID: document.ID},
-		TenantID:          datasetAccess.TenantID,
-		CreatedBy:         document.CreatedBy,
-		OwnerUserID:       document.UserID,
-		Visibility:        datasetAccess.Visibility,
-		TenantRequirement: datasetAccess.TenantRequirement,
-		OwnerOperations:   datasetAccess.OwnerOperations,
-		TenantOperations:  datasetAccess.TenantOperations,
-		CreatorOperations: datasetAccess.CreatorOperations,
-		Active:            datasetAccess.Active && document.Status != nil && *document.Status == string(entity.StatusValid),
+		Ref:                   ResourceRef{Kind: ResourceKindDocument, ID: document.ID},
+		TenantID:              datasetAccess.TenantID,
+		CreatedBy:             document.CreatedBy,
+		OwnerUserID:           document.UserID,
+		ParentRefs:            []ResourceRef{{Kind: ResourceKindDataset, ID: document.KbID}},
+		ParentAccessOperation: OperationRead,
+		Visibility:            datasetAccess.Visibility,
+		TenantRequirement:     datasetAccess.TenantRequirement,
+		OwnerOperations:       datasetAccess.OwnerOperations,
+		TenantOperations:      datasetAccess.TenantOperations,
+		CreatorOperations:     datasetAccess.CreatorOperations,
+		Active:                datasetAccess.Active && document.Status != nil && *document.Status == string(entity.StatusValid),
 	}
 }
 

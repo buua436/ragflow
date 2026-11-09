@@ -17,6 +17,7 @@
 package service
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -170,6 +171,62 @@ func TestCreateGroupDoesNotMutateRequestName(t *testing.T) {
 	}
 	if req.Name != "Group A" {
 		t.Fatalf("CreateGroup mutated req.Name to %q", req.Name)
+	}
+}
+
+func TestCreateGroupKeepsActorSeparateFromTenant(t *testing.T) {
+	db := setupCompilationGroupTestDB(t)
+	if err := testsupport.PrepareEnterprisePermissionFixture(db, "tenant-1", "tenant-1", "actor-1"); err != nil {
+		t.Fatalf("prepare actor membership: %v", err)
+	}
+	status := string(entity.StatusValid)
+	var membership entity.UserTenant
+	if err := db.Where("tenant_id = ? AND user_id = ?", "tenant-1", "actor-1").Take(&membership).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		if err := db.Create(&entity.UserTenant{
+			ID: "actor-membership", UserID: "actor-1", TenantID: "tenant-1",
+			Role: string(permission.RoleNormal), Status: &status,
+		}).Error; err != nil {
+			t.Fatalf("seed actor membership: %v", err)
+		}
+	} else if err != nil {
+		t.Fatalf("load actor membership: %v", err)
+	}
+	svc := NewCompilationTemplateGroupService()
+	ctx := permission.WithIdentity(t.Context(), "actor-1", "tenant-1")
+	group, err := svc.CreateGroup(ctx, &GroupRequest{
+		Name:      "Actor-owned group",
+		Templates: []*GroupTemplate{{Name: "child", Kind: "text", Config: entity.JSONMap{}}},
+	})
+	if err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	var persistedGroup entity.CompilationTemplateGroup
+	if err := db.Where("id = ?", group.ID).Take(&persistedGroup).Error; err != nil {
+		t.Fatalf("load group: %v", err)
+	}
+	if persistedGroup.UserID != "actor-1" || persistedGroup.TenantID != "tenant-1" {
+		t.Fatalf("group identity = user %q, tenant %q; want actor-1, tenant-1", persistedGroup.UserID, persistedGroup.TenantID)
+	}
+	var child entity.CompilationTemplate
+	if err := db.Where("group_id = ?", group.ID).Take(&child).Error; err != nil {
+		t.Fatalf("load child template: %v", err)
+	}
+	if child.UserID != "actor-1" || child.TenantID == nil || *child.TenantID != "tenant-1" {
+		t.Fatalf("child identity = user %q, tenant %v; want actor-1, tenant-1", child.UserID, child.TenantID)
+	}
+}
+
+func TestCompilationTemplateGroupWritesRequireUserIdentity(t *testing.T) {
+	setupCompilationGroupTestDB(t)
+	svc := NewCompilationTemplateGroupService()
+	group := seedCompilationGroup(t, svc, "tenant-1", "Existing", "child")
+	ctx := permission.WithTenantID(t.Context(), "tenant-1")
+
+	if _, err := svc.CreateGroup(ctx, &GroupRequest{Name: "Missing actor", Templates: []*GroupTemplate{{Name: "child", Kind: "text"}}}); err != permission.ErrUnauthenticated {
+		t.Fatalf("CreateGroup() error = %v, want %v", err, permission.ErrUnauthenticated)
+	}
+	if _, err := svc.UpdateGroup(ctx, group.ID, &GroupRequest{Templates: []*GroupTemplate{{ID: group.Templates[0].ID, Name: "child", Kind: "text"}}}); err != permission.ErrUnauthenticated {
+		t.Fatalf("UpdateGroup() error = %v, want %v", err, permission.ErrUnauthenticated)
 	}
 }
 

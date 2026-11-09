@@ -107,8 +107,8 @@ func (s *FileService) listFiles(ctx context.Context, tenantID, pfID string, page
 		return nil, err
 	}
 
-	// Apply file visibility in SQL before count and pagination. Community
-	// permission policy compiles this to correlated EXISTS predicates so large
+	// Apply file visibility in SQL before count and pagination. The permission
+	// policy compiles this to correlated EXISTS predicates so large
 	// folders do not need to materialize every candidate ID.
 	excludeSkills := folder.ID == folder.ParentID
 	checker := permission.NewDatabaseChecker(dao.DB)

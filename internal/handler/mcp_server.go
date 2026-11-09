@@ -54,8 +54,8 @@ func NewMCPServerHandler(ds *dataset.DatasetService, chats *service.ChatService)
 	}
 }
 
-func (h *MCPServerHandler) newTransport(resolveUser func(context.Context, string) (string, error), opts mcp.Options) *mcp.Handler {
-	return mcp.NewHandler(resolveUser, func() mcp.Connector {
+func (h *MCPServerHandler) newTransport(resolveIdentity func(context.Context, string) (string, string, error), opts mcp.Options) *mcp.Handler {
+	return mcp.NewHandler(resolveIdentity, func() mcp.Connector {
 		return mcp.NewServiceConnector(h.listDatasetsFunc, h.listChatsFunc, h.retrievalFunc)
 	}, opts)
 }
@@ -64,25 +64,31 @@ func (h *MCPServerHandler) newTransport(resolveUser func(context.Context, string
 // Self-host mode intentionally gives trusted clients the configured user's identity;
 // host mode resolves each request's credentials independently.
 func (h *MCPServerHandler) NewStandalone(ctx context.Context, auth *AuthHandler, cfg config.MCPConfig) (*mcp.Handler, error) {
-	resolveUser := func(ctx context.Context, authorization string) (string, error) {
+	resolveIdentity := func(ctx context.Context, authorization string) (string, string, error) {
 		if cfg.LaunchMode == "self-host" {
 			authorization = cfg.HostAPIKey
 		}
-		user, err := auth.ResolveMCPUser(ctx, authorization)
+		identity, err := auth.ResolveMCPIdentity(ctx, authorization)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		return user.ID, nil
+		if identity == nil || identity.User == nil || identity.User.ID == "" {
+			return "", "", permission.ErrUnauthenticated
+		}
+		if identity.TenantID == "" {
+			return "", "", permission.ErrTenantContextMissing
+		}
+		return identity.User.ID, identity.TenantID, nil
 	}
 	if cfg.LaunchMode == "self-host" {
 		authCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		_, err := resolveUser(authCtx, "")
+		_, _, err := resolveIdentity(authCtx, "")
 		cancel()
 		if err != nil {
 			return nil, errors.New("invalid configured MCP API key")
 		}
 	}
-	return h.newTransport(resolveUser, mcp.Options{SSE: cfg.SSE, StreamableHTTP: cfg.StreamableHTTP, JSONResponse: cfg.JSONResponse}), nil
+	return h.newTransport(resolveIdentity, mcp.Options{SSE: cfg.SSE, StreamableHTTP: cfg.StreamableHTTP, JSONResponse: cfg.JSONResponse}), nil
 }
 
 // HandleMCP is the Gin handler for the MCP endpoint. It reads the JSON-RPC
@@ -96,12 +102,16 @@ func (h *MCPServerHandler) NewStandalone(ctx context.Context, auth *AuthHandler,
 // @Produce json
 // @Router /api/v1/mcp [post]
 func (h *MCPServerHandler) HandleMCP(c *gin.Context) {
-	hdl := h.newTransport(func(ctx context.Context, _ string) (string, error) {
+	hdl := h.newTransport(func(ctx context.Context, _ string) (string, string, error) {
 		userID := permission.UserIDFromContext(ctx)
 		if userID == "" {
-			return "", permission.ErrUnauthenticated
+			return "", "", permission.ErrUnauthenticated
 		}
-		return userID, nil
+		tenantID := permission.TenantIDFromContext(ctx)
+		if tenantID == "" {
+			return "", "", permission.ErrTenantContextMissing
+		}
+		return userID, tenantID, nil
 	}, mcp.Options{StreamableHTTP: true, JSONResponse: true})
 	defer hdl.Close()
 	request := c.Request.Clone(c.Request.Context())

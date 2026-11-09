@@ -31,7 +31,7 @@ func TestStandaloneMCPIdentityAndRevocation(t *testing.T) {
 				if revoked {
 					return nil, common.CodeUnauthorized, errors.New("revoked")
 				}
-				return &service.AuthIdentity{User: &entity.User{ID: key}}, common.CodeSuccess, nil
+				return &service.AuthIdentity{User: &entity.User{ID: key}, TenantID: "tenant-" + key}, common.CodeSuccess, nil
 			}}}
 			h, err := (&MCPServerHandler{}).NewStandalone(t.Context(), auth, config.MCPConfig{LaunchMode: mode, HostAPIKey: "configured-key", SSE: true, StreamableHTTP: true, JSONResponse: true})
 			if err != nil {

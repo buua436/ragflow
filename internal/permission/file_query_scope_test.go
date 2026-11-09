@@ -45,6 +45,7 @@ func TestFileQueryScopeFiltersAuthorizedIDsBeforePagination(t *testing.T) {
 
 	for _, file := range []entity.File{
 		{ID: "root", ParentID: "root", UserID: "file-owner", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "/", Type: "folder"},
+		{ID: "team-folder", ParentID: "root", UserID: "file-owner", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "team-folder", Type: "folder"},
 		{ID: "reader-owned", ParentID: "root", UserID: "reader", TenantID: "file-tenant", CreatedBy: "reader", Name: "reader.pdf", Type: "pdf"},
 		{ID: "owner-private", ParentID: "root", UserID: "file-owner", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "private.pdf", Type: "pdf"},
 		{ID: "team-linked", ParentID: "root", UserID: "file-owner", TenantID: "file-tenant", CreatedBy: "file-owner", Name: "team.pdf", Type: "pdf"},
@@ -65,6 +66,7 @@ func TestFileQueryScopeFiltersAuthorizedIDsBeforePagination(t *testing.T) {
 	}
 	for _, link := range []entity.File2Document{
 		{ID: "team-link", FileID: stringPointer("team-linked"), DocumentID: stringPointer("team-document")},
+		{ID: "team-folder-link", FileID: stringPointer("team-folder"), DocumentID: stringPointer("team-document")},
 		{ID: "private-link", FileID: stringPointer("private-linked"), DocumentID: stringPointer("private-document")},
 	} {
 		if err := db.Create(&link).Error; err != nil {
@@ -89,12 +91,13 @@ func TestFileQueryScopeFiltersAuthorizedIDsBeforePagination(t *testing.T) {
 	if err := query.Find(&visible).Error; err != nil {
 		t.Fatalf("query visible files: %v", err)
 	}
-	if len(visible) != 2 || visible[0].ID != "reader-owned" || visible[1].ID != "team-linked" {
-		t.Fatalf("visible file IDs = %v, want [reader-owned team-linked]", fileIDs(visible))
+	if len(visible) != 3 || visible[0].ID != "reader-owned" || visible[1].ID != "team-folder" || visible[2].ID != "team-linked" {
+		t.Fatalf("visible file IDs = %v, want [reader-owned team-folder team-linked]", fileIDs(visible))
 	}
 
 	refs := []ResourceRef{
 		{Kind: ResourceKindFile, ID: "reader-owned"},
+		{Kind: ResourceKindFolder, ID: "team-folder"},
 		{Kind: ResourceKindFile, ID: "team-linked"},
 	}
 	accesses, err := checker.FilterAccesses(WithIdentity(ctx, "reader", "file-tenant"), refs, OperationRead)
@@ -105,8 +108,8 @@ func TestFileQueryScopeFiltersAuthorizedIDsBeforePagination(t *testing.T) {
 		t.Errorf("owner access mask = %d, want %d", accesses[refs[0]].PermissionMask, ResourcePermissionOwner)
 	}
 	sharedMask := ResourcePermissionRead | ResourcePermissionWrite | ResourcePermissionManage
-	if accesses[refs[1]].PermissionMask != sharedMask {
-		t.Errorf("shared access mask = %d, want %d", accesses[refs[1]].PermissionMask, sharedMask)
+	if accesses[refs[1]].PermissionMask != sharedMask || accesses[refs[2]].PermissionMask != sharedMask {
+		t.Errorf("shared file/folder access masks = (%d, %d), want (%d, %d)", accesses[refs[1]].PermissionMask, accesses[refs[2]].PermissionMask, sharedMask, sharedMask)
 	}
 
 	statement := scope.Apply(db.Session(&gorm.Session{DryRun: true}).Model(&entity.File{})).
