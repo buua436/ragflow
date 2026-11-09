@@ -329,8 +329,7 @@ func (h *MemoryHandler) ListMemories(c *gin.Context) {
 	result, err := h.memoryService.ListMemories(ctx, tenantIDs, memoryTypes, storageType, keywords, page, pageSize, c.Query("canvas_id"))
 	if err != nil {
 		code := common.CodeServerError
-		if errors.Is(err, permission.ErrUnauthenticated) || errors.Is(err, permission.ErrPermissionDenied) ||
-			errors.Is(err, permission.ErrMembershipNotFound) || errors.Is(err, permission.ErrResourceNotFound) {
+		if permissionresponse.IsPermissionError(err) {
 			code, err = permissionresponse.Normalize(err)
 		}
 		common.RespondError(c, code, err.Error())

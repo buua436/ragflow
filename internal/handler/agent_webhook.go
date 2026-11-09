@@ -83,6 +83,7 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
 	"ragflow/internal/permission"
+	permissionresponse "ragflow/internal/permission/response"
 )
 
 // canvasLoader is the subset of service.AgentService the webhook handler
@@ -282,8 +283,9 @@ func (h *AgentHandler) CreateWebhookCredential(c *gin.Context) {
 	}
 	credential, err := h.webhookCredentialManager().Issue(ctx, canvas)
 	if err != nil {
-		if errors.Is(err, permission.ErrPermissionDenied) || errors.Is(err, permission.ErrMembershipNotFound) || errors.Is(err, permission.ErrIdentityMismatch) {
-			common.Respond(c, http.StatusForbidden, common.CodeForbidden, nil, "You do not have permission to create a webhook credential for this agent.")
+		if permissionresponse.IsPermissionError(err) {
+			code, normalized := permissionresponse.Normalize(err)
+			common.Respond(c, int(code), code, nil, normalized.Error())
 			return
 		}
 		jsonInternalError(c, err)

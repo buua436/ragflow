@@ -24,6 +24,7 @@ import (
 	"ragflow/internal/dao"
 	"ragflow/internal/entity"
 	"ragflow/internal/permission"
+	permissionresponse "ragflow/internal/permission/response"
 
 	"ragflow/internal/service"
 
@@ -114,8 +115,9 @@ func currentAPIKeyOwner(c *gin.Context) (common.ErrorCode, error) {
 	}
 	ctx := permission.WithIdentity(c.Request.Context(), user.ID, tenantID)
 	if err := permission.NewDatabaseChecker(dao.DB).CheckTenant(ctx, tenantID, permission.TenantOwner); err != nil {
-		if errors.Is(err, permission.ErrMembershipNotFound) || errors.Is(err, permission.ErrPermissionDenied) {
-			return common.CodeForbidden, permission.ErrPermissionDenied
+		if permissionresponse.IsPermissionError(err) {
+			code, normalized := permissionresponse.Normalize(err)
+			return code, normalized
 		}
 		return common.CodeServerError, err
 	}
@@ -123,6 +125,9 @@ func currentAPIKeyOwner(c *gin.Context) (common.ErrorCode, error) {
 }
 
 func respondAPIKeyContextError(c *gin.Context, code common.ErrorCode, err error) {
+	if permissionresponse.IsPermissionError(err) {
+		code, err = permissionresponse.Normalize(err)
+	}
 	status := http.StatusForbidden
 	if code == common.CodeUnauthorized {
 		status = http.StatusUnauthorized

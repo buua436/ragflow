@@ -30,7 +30,6 @@ package handler
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -38,7 +37,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"ragflow/internal/common"
-	"ragflow/internal/permission"
 	"ragflow/internal/utility"
 )
 
@@ -87,8 +85,7 @@ func (h *AgentHandler) streamAgentAttachment(c *gin.Context, attachmentID string
 	ctx := c.Request.Context()
 	blob, err := h.fileService.DownloadAgentFile(ctx, attachmentID)
 	if err != nil {
-		if errors.Is(err, permission.ErrUnauthenticated) {
-			common.RespondError(c, common.CodeUnauthorized, err.Error())
+		if respondPermissionErrorIf(c, err, true) {
 			return
 		}
 		common.RespondError(c, common.CodeDataError, "Attachment not found!")

@@ -28,7 +28,6 @@ import (
 
 	"ragflow/internal/common"
 	"ragflow/internal/entity"
-	permissionresponse "ragflow/internal/permission/response"
 	"ragflow/internal/service"
 )
 
@@ -75,6 +74,9 @@ func (h *MCPHandler) CreateMCPServer(c *gin.Context) {
 
 	result, code, err := h.mcpService.CreateMCPServer(ctx, req)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		common.RespondError(c, code, err.Error())
 		return
 	}
@@ -100,6 +102,9 @@ func (h *MCPHandler) ListMCPServers(c *gin.Context) {
 
 	result, code, err := h.mcpService.ListMCPServers(ctx, tenantID, mcpIDs, keywords, page, pageSize, orderby, desc)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		if code == common.CodeServerError {
 			common.Respond(c, http.StatusInternalServerError, code, nil, err.Error())
 			return
@@ -133,6 +138,9 @@ func (h *MCPHandler) GetMCPServer(c *gin.Context) {
 }
 
 func mcpDetailError(c *gin.Context, code common.ErrorCode, err error) {
+	if respondPermissionErrorIf(c, err, true) {
+		return
+	}
 	if code == common.CodeDataError || code == common.CodeUnauthorized || code == common.CodeForbidden || code == common.CodeNotFound {
 		common.RespondError(c, code, err.Error())
 		return
@@ -152,6 +160,9 @@ func (h *MCPHandler) UpdateMCPServer(c *gin.Context) {
 	ctx := c.Request.Context()
 	result, code, err := h.mcpService.UpdateMCPServer(ctx, mcpID, req)
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		common.RespondError(c, code, err.Error())
 		return
 	}
@@ -164,6 +175,9 @@ func (h *MCPHandler) DeleteMCPServer(c *gin.Context) {
 	ctx := c.Request.Context()
 	_, code, err := h.mcpService.DeleteMCPServer(ctx, c.Param("mcp_id"))
 	if err != nil {
+		if respondPermissionErrorIf(c, err, true) {
+			return
+		}
 		common.RespondError(c, code, err.Error())
 		return
 	}
@@ -177,9 +191,7 @@ func mcpErrorResponse(c *gin.Context, err error) bool {
 	if err == nil {
 		return false
 	}
-	if permissionresponse.IsPermissionError(err) {
-		code, normalized := permissionresponse.NormalizeHidden(err)
-		common.RespondError(c, code, normalized.Error())
+	if respondPermissionErrorIf(c, err, true) {
 		return true
 	}
 	switch {
@@ -292,9 +304,7 @@ func (h *MCPHandler) ImportMCPServers(c *gin.Context) {
 	ctx := c.Request.Context()
 	results, err := h.mcpService.ImportServers(ctx, servers, timeout)
 	if err != nil {
-		if permissionresponse.IsPermissionError(err) {
-			code, normalized := permissionresponse.Normalize(err)
-			common.RespondError(c, code, normalized.Error())
+		if respondPermissionErrorIf(c, err, false) {
 			return
 		}
 		common.Respond(c, http.StatusInternalServerError, common.CodeBadRequest, nil, err.Error())

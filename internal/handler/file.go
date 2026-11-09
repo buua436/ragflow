@@ -668,8 +668,7 @@ func (h *FileHandler) LinkToDatasets(c *gin.Context) {
 // any other (internal) error is reported as a server error.
 func linkToDatasetsErrorCode(err error) common.ErrorCode {
 	switch {
-	case errors.Is(err, permission.ErrUnauthenticated), errors.Is(err, permission.ErrMembershipNotFound),
-		errors.Is(err, permission.ErrPermissionDenied), errors.Is(err, permission.ErrResourceNotFound):
+	case permissionresponse.IsPermissionError(err):
 		code, _ := permissionresponse.Normalize(err)
 		return code
 	case errors.Is(err, document.ErrLinkFileNotFound), errors.Is(err, document.ErrLinkDatasetNotFound):

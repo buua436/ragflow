@@ -28,7 +28,6 @@ import (
 
 	"ragflow/internal/common"
 	"ragflow/internal/entity"
-	permissionresponse "ragflow/internal/permission/response"
 	"ragflow/internal/service"
 	syncerconnector "ragflow/internal/syncer/connector"
 )
@@ -95,12 +94,13 @@ func (h *ConnectorHandler) ListConnectors(c *gin.Context) {
 // by the Python connector_api, and writes the JSON response. It returns true when
 // the error was handled.
 func connectorErrorResponse(c *gin.Context, err error) bool {
-	switch {
-	case err == nil:
+	if err == nil {
 		return false
-	case permissionresponse.IsPermissionError(err):
-		code, permissionErr := permissionresponse.NormalizeHidden(err)
-		common.RespondError(c, code, permissionErr.Error())
+	}
+	if respondPermissionErrorIf(c, err, true) {
+		return true
+	}
+	switch {
 	case errors.Is(err, service.ErrConnectorIDRequired):
 		common.RespondError(c, common.CodeDataError, err.Error())
 	case errors.Is(err, service.ErrConnectorNotFound):
@@ -330,8 +330,7 @@ func (h *ConnectorHandler) TestConnector(c *gin.Context) {
 	}
 
 	err := h.connectorService.TestConnector(ctx, connectorID, request)
-	if permissionresponse.IsPermissionError(err) {
-		connectorErrorResponse(c, err)
+	if respondPermissionErrorIf(c, err, true) {
 		return
 	}
 	if errors.Is(err, service.ErrConnectorTestUnsupported) || errors.Is(err, service.ErrConnectorSourceNotImplemented) {

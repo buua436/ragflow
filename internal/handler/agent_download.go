@@ -23,7 +23,6 @@
 package handler
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -33,7 +32,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"ragflow/internal/common"
-	"ragflow/internal/permission"
 )
 
 // DownloadAgentFile GET /api/v1/agents/download?id=<file_id>
@@ -47,8 +45,7 @@ func (h *AgentHandler) DownloadAgentFile(c *gin.Context) {
 	ctx := c.Request.Context()
 	blob, err := h.fileService.DownloadAgentFile(ctx, fileID)
 	if err != nil {
-		if errors.Is(err, permission.ErrUnauthenticated) {
-			common.RespondError(c, common.CodeUnauthorized, err.Error())
+		if respondPermissionErrorIf(c, err, true) {
 			return
 		}
 		common.RespondError(c, common.CodeServerError, err.Error())

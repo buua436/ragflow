@@ -17,10 +17,12 @@ func TestNormalize(t *testing.T) {
 		message string
 	}{
 		{name: "unauthenticated", err: permission.ErrUnauthenticated, code: common.CodeUnauthorized, message: "Authentication required"},
+		{name: "identity mismatch", err: permission.ErrIdentityMismatch, code: common.CodeForbidden, message: "Permission denied"},
 		{name: "missing resource", err: permission.ErrResourceNotFound, code: common.CodeNotFound, message: "Resource not found"},
 		{name: "denied", err: permission.ErrPermissionDenied, code: common.CodeForbidden, message: "Permission denied"},
 		{name: "missing membership", err: permission.ErrMembershipNotFound, code: common.CodeForbidden, message: "Permission denied"},
 		{name: "missing tenant context", err: permission.ErrTenantContextMissing, code: common.CodeForbidden, message: "Permission denied"},
+		{name: "invalid permission request", err: permission.ErrInvalidPermission, code: common.CodeBadRequest, message: "Invalid permission request"},
 		{name: "internal permission failure", err: errors.New("database credentials must not leak"), code: common.CodeServerError, message: "Permission check failed"},
 	}
 
@@ -66,8 +68,14 @@ func TestNormalizeHidden(t *testing.T) {
 }
 
 func TestIsPermissionError(t *testing.T) {
-	if !IsPermissionError(fmt.Errorf("wrapped: %w", permission.ErrPermissionDenied)) {
-		t.Fatal("IsPermissionError() = false for wrapped permission denial")
+	for _, err := range []error{
+		fmt.Errorf("wrapped: %w", permission.ErrPermissionDenied),
+		fmt.Errorf("wrapped: %w", permission.ErrIdentityMismatch),
+		fmt.Errorf("wrapped: %w", permission.ErrInvalidPermission),
+	} {
+		if !IsPermissionError(err) {
+			t.Fatalf("IsPermissionError() = false for wrapped permission error %v", err)
+		}
 	}
 	if IsPermissionError(errors.New("ordinary failure")) {
 		t.Fatal("IsPermissionError() = true for ordinary failure")

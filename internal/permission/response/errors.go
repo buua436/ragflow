@@ -37,10 +37,12 @@ func NormalizeHidden(err error) (common.ErrorCode, error) {
 // IsPermissionError reports whether err carries a typed permission decision.
 func IsPermissionError(err error) bool {
 	return errors.Is(err, permission.ErrUnauthenticated) ||
+		errors.Is(err, permission.ErrIdentityMismatch) ||
 		errors.Is(err, permission.ErrResourceNotFound) ||
 		errors.Is(err, permission.ErrMembershipNotFound) ||
 		errors.Is(err, permission.ErrTenantContextMissing) ||
-		errors.Is(err, permission.ErrPermissionDenied)
+		errors.Is(err, permission.ErrPermissionDenied) ||
+		errors.Is(err, permission.ErrInvalidPermission)
 }
 
 func normalize(err error, hideResource bool) (common.ErrorCode, error) {
@@ -54,9 +56,15 @@ func normalize(err error, hideResource bool) (common.ErrorCode, error) {
 	case errors.Is(err, permission.ErrUnauthenticated):
 		code = common.CodeUnauthorized
 		message = "Authentication required"
+	case errors.Is(err, permission.ErrIdentityMismatch):
+		code = common.CodeForbidden
+		message = "Permission denied"
 	case errors.Is(err, permission.ErrResourceNotFound):
 		code = common.CodeNotFound
 		message = "Resource not found"
+	case errors.Is(err, permission.ErrInvalidPermission):
+		code = common.CodeBadRequest
+		message = "Invalid permission request"
 	case errors.Is(err, permission.ErrPermissionDenied), errors.Is(err, permission.ErrMembershipNotFound), errors.Is(err, permission.ErrTenantContextMissing):
 		code = common.CodeForbidden
 		message = "Permission denied"

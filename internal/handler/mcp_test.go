@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -29,6 +30,7 @@ import (
 
 	"ragflow/internal/common"
 	"ragflow/internal/entity"
+	"ragflow/internal/permission"
 )
 
 func TestNewMCPServerResponsePreservesNullDescriptionAndFormatsDates(t *testing.T) {
@@ -76,6 +78,38 @@ func TestNewMCPServerResponsePreservesNullDescriptionAndFormatsDates(t *testing.
 	}
 	if bytes.Contains(payload, []byte("ragflow-secret")) || !bytes.Contains(payload, []byte(`"authorization_token":"********"`)) {
 		t.Fatalf("payload %s exposes the MCP authorization token", payload)
+	}
+}
+
+func TestMCPErrorResponseUsesUnifiedPermissionErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name    string
+		err     error
+		code    common.ErrorCode
+		message string
+	}{
+		{name: "identity mismatch hides resource", err: fmt.Errorf("wrapped: %w", permission.ErrIdentityMismatch), code: common.CodeNotFound, message: "Resource not found"},
+		{name: "invalid permission request", err: fmt.Errorf("wrapped: %w", permission.ErrInvalidPermission), code: common.CodeBadRequest, message: "Invalid permission request"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			if !mcpErrorResponse(ctx, test.err) {
+				t.Fatal("mcpErrorResponse() = false, want handled")
+			}
+			var response struct {
+				Code    common.ErrorCode
+				Message string
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode API response %q: %v", recorder.Body.String(), err)
+			}
+			if response.Code != test.code || response.Message != test.message {
+				t.Fatalf("API response = (%d, %q), want (%d, %q)", response.Code, response.Message, test.code, test.message)
+			}
+		})
 	}
 }
 

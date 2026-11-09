@@ -35,6 +35,9 @@ type logListCapture struct {
 }
 
 func (s fakeConnectorService) ListConnectors(context.Context, string) (*service.ListConnectorsResponse, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
 	return &service.ListConnectorsResponse{}, nil
 }
 
@@ -224,6 +227,39 @@ func TestConnectorHandlerGetConnector(t *testing.T) {
 				}
 			} else if body["data"] != tt.wantData {
 				t.Fatalf("data=%v want=%v body=%v", body["data"], tt.wantData, body)
+			}
+		})
+	}
+}
+
+func TestConnectorListAPIUsesUnifiedPermissionErrors(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	tests := []struct {
+		name    string
+		err     error
+		code    common.ErrorCode
+		message string
+	}{
+		{name: "identity mismatch hides resource", err: fmt.Errorf("wrapped: %w", permission.ErrIdentityMismatch), code: common.CodeNotFound, message: "Resource not found"},
+		{name: "invalid permission request", err: fmt.Errorf("wrapped: %w", permission.ErrInvalidPermission), code: common.CodeBadRequest, message: "Invalid permission request"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(recorder)
+			ctx.Request = httptest.NewRequest(http.MethodGet, "/connector/list", nil)
+			ctx.Request = ctx.Request.WithContext(permission.WithIdentity(ctx.Request.Context(), "reader", "tenant-1"))
+			(&ConnectorHandler{connectorService: fakeConnectorService{err: test.err}}).ListConnectors(ctx)
+
+			var response struct {
+				Code    common.ErrorCode
+				Message string
+			}
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatalf("decode API response %q: %v", recorder.Body.String(), err)
+			}
+			if response.Code != test.code || response.Message != test.message {
+				t.Fatalf("API response = (%d, %q), want (%d, %q)", response.Code, response.Message, test.code, test.message)
 			}
 		})
 	}

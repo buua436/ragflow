@@ -204,11 +204,10 @@ func (h *AgentHandler) DebugComponent(c *gin.Context) {
 			return
 		}
 		if err := permission.NewDatabaseChecker(dao.DB).CheckResource(c.Request.Context(), permission.ResourceRef{Kind: permission.ResourceKindCanvas, ID: canvasID}, permission.OperationUpdate); err != nil {
-			if errors.Is(err, permission.ErrResourceNotFound) || errors.Is(err, permission.ErrPermissionDenied) {
-				common.RespondError(c, common.CodeOperatingError, canvasNoAccessMessage)
-			} else {
-				common.RespondError(c, common.CodeServerError, err.Error())
+			if respondPermissionErrorIf(c, err, true) {
+				return
 			}
+			common.RespondError(c, common.CodeServerError, err.Error())
 			return
 		}
 	}
