@@ -501,6 +501,11 @@ func (s *DocumentService) StopParseDocuments(ctx context.Context, datasetID stri
 		}
 		return nil, err
 	}
+	for _, doc := range docs {
+		if err := service.CheckDocumentAccess(ctx, doc.ID, datasetID, permission.OperationRun); err != nil {
+			return nil, err
+		}
+	}
 
 	var errs []string
 	successCount := 0
@@ -579,10 +584,16 @@ func (s *DocumentService) StopParseDocumentsAll(ctx context.Context, datasetID s
 		runStatuses = common.DefaultCancelRunStatuses
 	}
 
-	ids, err := s.ListDocumentIDsByDatasetIDWithOptions(ctx, dao.DocumentListOptions{
+	opts := dao.DocumentListOptions{
 		KbID:        datasetID,
 		RunStatuses: runStatuses,
-	})
+	}
+	scope, err := queryDocumentScope(ctx, datasetID, permission.OperationRun)
+	if err != nil {
+		return nil, err
+	}
+	documentQuery := scope.Apply(dao.DB.WithContext(ctx).Model(&entity.Document{}))
+	ids, err := s.documentDAO.ListIDsByKBIDWithOptions(ctx, documentQuery, opts)
 	if err != nil {
 		return nil, err
 	}

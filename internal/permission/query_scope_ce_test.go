@@ -135,10 +135,12 @@ func TestCommunityDocumentQueryScopeRequiresReadableDataset(t *testing.T) {
 			t.Fatalf("create dataset %q: %v", dataset.ID, err)
 		}
 	}
+	inactive := "0"
 	for _, document := range []entity.Document{
 		{ID: "team-document", UserID: "dataset-owner", KbID: "team-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "dataset-owner", Suffix: "pdf", Status: &valid},
 		{ID: "owned-document", UserID: "reader", KbID: "reader-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "reader", Suffix: "pdf", Status: &valid},
 		{ID: "hidden-parent-document", UserID: "reader", KbID: "private-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "reader", Suffix: "pdf", Status: &valid},
+		{ID: "inactive-document", UserID: "reader", KbID: "team-dataset", ParserID: "general", ParserConfig: entity.JSONMap{}, SourceType: "local", Type: "pdf", CreatedBy: "reader", Suffix: "pdf", Status: &inactive},
 	} {
 		if err := db.Create(&document).Error; err != nil {
 			t.Fatalf("create document %q: %v", document.ID, err)

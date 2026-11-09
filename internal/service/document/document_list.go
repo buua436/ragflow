@@ -13,6 +13,14 @@ import (
 	"ragflow/internal/service"
 )
 
+func queryDocumentScope(ctx context.Context, datasetID string, operation permission.Operation) (permission.QueryScope, error) {
+	query := permission.ScopeQuery{Kind: permission.ResourceKindDocument, Operation: operation}
+	if datasetID = strings.TrimSpace(datasetID); datasetID != "" {
+		query.Parent = permission.ResourceRef{Kind: permission.ResourceKindDataset, ID: datasetID}
+	}
+	return permission.NewDatabaseChecker(dao.DB).QueryScope(ctx, query)
+}
+
 // documentPipelineVersionOutdated reports whether a document pinned pipeline version
 // is still the latest of its canvas (design section 6.3). Informational only;
 // a non-latest version remains usable. Returns false with no pinned pipeline.
@@ -99,7 +107,12 @@ func escapeSQLLikePattern(s string) string {
 // ListDocuments list documents
 func (s *DocumentService) ListDocuments(ctx context.Context, page, pageSize int) ([]*DocumentResponse, int64, error) {
 	offset := (page - 1) * pageSize
-	documents, total, err := s.documentDAO.List(ctx, dao.DB, offset, pageSize)
+	scope, err := queryDocumentScope(ctx, "", permission.OperationRead)
+	if err != nil {
+		return nil, 0, err
+	}
+	documentQuery := scope.Apply(dao.DB.WithContext(ctx).Model(&entity.Document{}))
+	documents, total, err := s.documentDAO.List(ctx, documentQuery, offset, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -187,7 +200,12 @@ func (s *DocumentService) ListDocumentsByDatasetIDWithOptions(ctx context.Contex
 	if opts.OrderBy == "" {
 		opts.OrderBy = "create_time"
 	}
-	documents, total, err := s.documentDAO.ListByKBIDWithOptions(ctx, dao.DB, opts)
+	scope, err := queryDocumentScope(ctx, opts.KbID, permission.OperationRead)
+	if err != nil {
+		return nil, 0, err
+	}
+	documentQuery := scope.Apply(dao.DB.WithContext(ctx).Model(&entity.Document{}))
+	documents, total, err := s.documentDAO.ListByKBIDWithOptions(ctx, documentQuery, opts)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -201,11 +219,16 @@ func (s *DocumentService) ListDocumentsByDatasetIDWithOptions(ctx context.Contex
 
 // GetDocumentFiltersByDatasetID returns aggregate filter values for documents in a dataset.
 func (s *DocumentService) GetDocumentFiltersByDatasetID(ctx context.Context, opts dao.DocumentListOptions) (map[string]interface{}, int64, error) {
-	filters, total, err := s.documentDAO.GetFilterByKBID(ctx, dao.DB, opts)
+	scope, err := queryDocumentScope(ctx, opts.KbID, permission.OperationRead)
 	if err != nil {
 		return nil, 0, err
 	}
-	docIDs, err := s.documentDAO.ListIDsByKBIDWithOptions(ctx, dao.DB, opts)
+	documentQuery := scope.Apply(dao.DB.WithContext(ctx).Model(&entity.Document{}))
+	filters, total, err := s.documentDAO.GetFilterByKBID(ctx, documentQuery, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	docIDs, err := s.documentDAO.ListIDsByKBIDWithOptions(ctx, documentQuery, opts)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -254,13 +277,23 @@ func (s *DocumentService) getDocumentMetadataFilter(ctx context.Context, kbID st
 
 // ListDocumentIDsByDatasetIDWithOptions lists matching document IDs without pagination.
 func (s *DocumentService) ListDocumentIDsByDatasetIDWithOptions(ctx context.Context, opts dao.DocumentListOptions) ([]string, error) {
-	return s.documentDAO.ListIDsByKBIDWithOptions(ctx, dao.DB, opts)
+	scope, err := queryDocumentScope(ctx, opts.KbID, permission.OperationRead)
+	if err != nil {
+		return nil, err
+	}
+	documentQuery := scope.Apply(dao.DB.WithContext(ctx).Model(&entity.Document{}))
+	return s.documentDAO.ListIDsByKBIDWithOptions(ctx, documentQuery, opts)
 }
 
 // GetDocumentsByAuthorID get documents by author ID
 func (s *DocumentService) GetDocumentsByAuthorID(ctx context.Context, authorID, page, pageSize int) ([]*DocumentResponse, int64, error) {
 	offset := (page - 1) * pageSize
-	documents, total, err := s.documentDAO.GetByAuthorID(ctx, dao.DB, fmt.Sprintf("%d", authorID), offset, pageSize)
+	scope, err := queryDocumentScope(ctx, "", permission.OperationRead)
+	if err != nil {
+		return nil, 0, err
+	}
+	documentQuery := scope.Apply(dao.DB.WithContext(ctx).Model(&entity.Document{}))
+	documents, total, err := s.documentDAO.GetByAuthorID(ctx, documentQuery, fmt.Sprintf("%d", authorID), offset, pageSize)
 	if err != nil {
 		return nil, 0, err
 	}

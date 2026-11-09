@@ -506,7 +506,7 @@ func TestBatchUpdateDocumentStatusReturnsPermissionErrorWhenAllDenied(t *testing
 	}
 }
 
-func TestBatchUpdateDocumentStatusRetainsPartialFailure(t *testing.T) {
+func TestBatchUpdateDocumentStatusRequiresDatasetAccessForEveryDocument(t *testing.T) {
 	db := setupServiceTestDB(t)
 	pushServiceDB(t, db)
 	insertTestKB(t, "kb-1", "tenant-1", 1, 0, 0)
@@ -532,7 +532,23 @@ func TestBatchUpdateDocumentStatusRetainsPartialFailure(t *testing.T) {
 	ctx := documentTestActorContext(t.Context(), "member", "tenant-1")
 	_, code, err := svc.BatchUpdateDocumentStatus(ctx, "kb-1", "1", []string{"member-doc", "owner-doc"})
 	if err == nil {
-		t.Fatal("expected a partial failure")
+		t.Fatal("expected dataset access to deny documents even when one document is member-owned")
+	}
+	if code != common.CodeForbidden {
+		t.Fatalf("result code/error = %d/%v, want dataset permission denial", code, err)
+	}
+}
+
+func TestBatchUpdateDocumentStatusRetainsPartialFailureForMissingDocument(t *testing.T) {
+	db := setupServiceTestDB(t)
+	pushServiceDB(t, db)
+	insertTestKB(t, "kb-1", "tenant-1", 1, 0, 0)
+	insertTestDoc(t, "doc-1", "kb-1", 0, 0)
+
+	svc := testDocumentService(t)
+	_, code, err := svc.BatchUpdateDocumentStatus(documentTestContext(t.Context()), "kb-1", "0", []string{"doc-1", "missing-doc"})
+	if err == nil {
+		t.Fatal("expected a partial failure for the missing document")
 	}
 	if code != common.CodeServerError || err.Error() != "partial failure" {
 		t.Fatalf("result code/error = %d/%v, want partial failure", code, err)

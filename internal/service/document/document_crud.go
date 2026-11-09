@@ -220,8 +220,9 @@ func (s *DocumentService) DeleteDocument(ctx context.Context, id string) error {
 //	ids: specific document IDs; deleteAll: delete all docs in the dataset.
 //	Returns the number of successfully deleted documents.
 func (s *DocumentService) DeleteDocuments(ctx context.Context, ids []string, deleteAll bool, datasetID string) (int, error) {
-	// Deleting the entire dataset requires dataset-level access; deleting
-	// explicit documents also accepts direct document grants.
+	// Deleting the entire dataset requires dataset-level access. Explicit
+	// document deletion still requires Dataset read access and the document
+	// delete-content operation.
 	if deleteAll {
 		if err := permission.NewDatabaseChecker(dao.DB).CheckResource(ctx, permission.ResourceRef{Kind: permission.ResourceKindDataset, ID: datasetID}, permission.OperationDeleteContent); err != nil {
 			_, permissionErr := permissionresponse.Normalize(err)

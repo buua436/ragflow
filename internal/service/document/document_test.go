@@ -2529,7 +2529,7 @@ func TestStopParseDocuments_Success(t *testing.T) {
 	insertTestIngestionTask(t, "task-1", "user-1", "doc-1", "kb-1")
 
 	svc := testDocumentService(t)
-	ctx := t.Context()
+	ctx := documentTestContext(t.Context())
 	result, err := svc.StopParseDocuments(ctx, "kb-1", []string{"doc-1"})
 	if err != nil {
 		t.Fatalf("StopParseDocuments failed: %v", err)
@@ -2563,7 +2563,7 @@ func TestStopParseDocuments_CancelStatus(t *testing.T) {
 	insertTestIngestionTaskWithStatus(t, "task-1", "user-1", "doc-1", "kb-1", common.STOPPED)
 
 	svc := testDocumentService(t)
-	ctx := t.Context()
+	ctx := documentTestContext(t.Context())
 	result, err := svc.StopParseDocuments(ctx, "kb-1", []string{"doc-1"})
 	if err != nil {
 		t.Fatalf("StopParseDocuments failed: %v", err)
@@ -2584,7 +2584,7 @@ func TestStopParseDocuments_NotRunningOrCancel(t *testing.T) {
 	insertTestDoc(t, "doc-1", "kb-1", 10, 5)
 
 	svc := testDocumentService(t)
-	ctx := t.Context()
+	ctx := documentTestContext(t.Context())
 	result, err := svc.StopParseDocuments(ctx, "kb-1", []string{"doc-1"})
 	if err != nil {
 		t.Fatalf("StopParseDocuments failed: %v", err)
@@ -2613,7 +2613,7 @@ func TestStopParseDocuments_UnfinishedTask(t *testing.T) {
 	insertTestIngestionTask(t, "task-1", "user-1", "doc-1", "kb-1")
 
 	svc := testDocumentService(t)
-	ctx := t.Context()
+	ctx := documentTestContext(t.Context())
 	result, err := svc.StopParseDocuments(ctx, "kb-1", []string{"doc-1"})
 	if err != nil {
 		t.Fatalf("StopParseDocuments failed: %v", err)
@@ -2634,7 +2634,7 @@ func TestStopParseDocuments_WrongDataset(t *testing.T) {
 	insertTestDoc(t, "doc-1", "kb-2", 10, 5)
 
 	svc := testDocumentService(t)
-	ctx := t.Context()
+	ctx := documentTestContext(t.Context())
 	_, err := svc.StopParseDocuments(ctx, "kb-1", []string{"doc-1"})
 	if err == nil {
 		t.Fatal("expected error for doc not belonging to dataset")
@@ -2648,7 +2648,7 @@ func TestStopParseDocuments_NotFound(t *testing.T) {
 	insertTestKB(t, "kb-1", "tenant-1", 0, 0, 0)
 
 	svc := testDocumentService(t)
-	ctx := t.Context()
+	ctx := documentTestContext(t.Context())
 	_, err := svc.StopParseDocuments(ctx, "kb-1", []string{"nonexistent"})
 	if err == nil {
 		t.Fatal("expected error for nonexistent document IDs")
@@ -2662,7 +2662,7 @@ func TestStopParseDocuments_EmptyIDs(t *testing.T) {
 	insertTestKB(t, "kb-1", "tenant-1", 0, 0, 0)
 
 	svc := testDocumentService(t)
-	ctx := t.Context()
+	ctx := documentTestContext(t.Context())
 	_, err := svc.StopParseDocuments(ctx, "kb-1", []string{})
 	if err == nil {
 		t.Fatal("expected error for empty doc IDs")
@@ -2678,7 +2678,7 @@ func TestStopParseDocuments_Deduplicate(t *testing.T) {
 	insertTestIngestionTask(t, "task-1", "user-1", "doc-1", "kb-1")
 
 	svc := testDocumentService(t)
-	ctx := t.Context()
+	ctx := documentTestContext(t.Context())
 	result, err := svc.StopParseDocuments(ctx, "kb-1", []string{"doc-1", "doc-1", "doc-1"})
 	if err != nil {
 		t.Fatalf("StopParseDocuments failed: %v", err)
@@ -2981,9 +2981,11 @@ func insertTestPreviewDoc(t *testing.T, db *gorm.DB, mockStorage *fakeUploadStor
 	loc := id + ".txt"
 	doc := &entity.Document{
 		ID:           id,
+		UserID:       "user-1",
 		KbID:         kbID,
 		ParserID:     "naive",
 		ParserConfig: entity.JSONMap{},
+		CreatedBy:    "user-1",
 		Name:         &name,
 		Location:     &loc,
 		Suffix:       "txt",
@@ -3086,9 +3088,10 @@ func TestGetDocumentPreview_MissingObjectSurfacesStorageError(t *testing.T) {
 	name := "doc.txt"
 	loc := "doc.txt"
 	if err := db.Create(&entity.Document{
-		ID: "doc-prev-miss", KbID: "kb-prev-miss", ParserID: "naive",
+		ID: "doc-prev-miss", UserID: "user-1", KbID: "kb-prev-miss", ParserID: "naive",
 		ParserConfig: entity.JSONMap{}, Name: &name, Location: &loc,
-		Suffix: "txt", Status: sptr("1"),
+		CreatedBy: "user-1",
+		Suffix:    "txt", Status: sptr("1"),
 	}).Error; err != nil {
 		t.Fatalf("insert test doc: %v", err)
 	}
