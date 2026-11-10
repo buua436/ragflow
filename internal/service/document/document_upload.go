@@ -257,15 +257,18 @@ func (s *DocumentService) addFileFromKB(ctx context.Context, doc *entity.Documen
 		return err
 	}
 	if len(existing) > 0 {
-		for _, mapping := range existing {
-			if mapping.FileID == nil || *mapping.FileID == "" {
-				continue
+		return dao.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			checker := permission.NewDatabaseChecker(tx)
+			for _, mapping := range existing {
+				if mapping.FileID == nil || *mapping.FileID == "" {
+					continue
+				}
+				if err := checker.GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindFile, ID: *mapping.FileID}); err != nil {
+					return err
+				}
 			}
-			if err := permission.NewDatabaseChecker(dao.DB).GrantResourceOwner(ctx, permission.ResourceRef{Kind: permission.ResourceKindFile, ID: *mapping.FileID}); err != nil {
-				return err
-			}
-		}
-		return nil
+			return nil
+		})
 	}
 	name := ""
 	if doc.Name != nil {
