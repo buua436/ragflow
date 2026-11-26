@@ -210,15 +210,6 @@ func (h *SearchHandler) GetSearch(c *gin.Context) {
 		common.RespondError(c, common.CodeDataError, err.Error())
 		return
 	}
-	operatorPermission, err := h.searchService.GetSearchOperatorPermission(ctx, searchID)
-	if err != nil {
-		if respondPermissionErrorIf(c, err, true) {
-			return
-		}
-		common.RespondError(c, common.CodeServerError, err.Error())
-		return
-	}
-
 	// Convert to response format (same as Python get_json_result(data=search))
 	result := map[string]interface{}{
 		"id":                  search.ID,
@@ -230,7 +221,7 @@ func (h *SearchHandler) GetSearch(c *gin.Context) {
 		"create_time":         search.CreateTime,
 		"update_time":         search.UpdateTime,
 		"search_config":       service.BuildSearchConfigResponse(search.SearchConfig),
-		"operator_permission": operatorPermission,
+		"operator_permission": search.OperatorPermission,
 	}
 
 	if search.Avatar != nil {

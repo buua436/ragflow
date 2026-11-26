@@ -225,29 +225,22 @@ func (s *SearchService) CreateSearch(ctx context.Context, name string, descripti
 }
 
 func (s *SearchService) GetSearchDetail(ctx context.Context, searchID string) (*entity.Search, error) {
-	if err := permission.NewDatabaseChecker(dao.DB).CheckResource(ctx, permission.ResourceRef{
-		Kind: permission.ResourceKindSearchApp,
-		ID:   searchID,
-	}, permission.OperationRead); err != nil {
-		return nil, err
-	}
-	search, err := s.searchDAO.GetByID(ctx, dao.DB, searchID)
-	if err != nil {
-		return nil, fmt.Errorf("can't find this Search App")
-	}
-
-	return search, nil
-}
-
-func (s *SearchService) GetSearchOperatorPermission(ctx context.Context, searchID string) (int32, error) {
 	access, err := permission.NewDatabaseChecker(dao.DB).ResolveAccess(ctx, permission.ResourceRef{
 		Kind: permission.ResourceKindSearchApp,
 		ID:   searchID,
 	})
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return access.PermissionMask, nil
+	if !access.Allows(permission.OperationRead) {
+		return nil, permission.ErrPermissionDenied
+	}
+	search, err := s.searchDAO.GetByID(ctx, dao.DB, searchID)
+	if err != nil {
+		return nil, fmt.Errorf("can't find this Search App")
+	}
+	search.OperatorPermission = access.PermissionMask
+	return search, nil
 }
 
 // GetSearchShareDetail returns the joined share-detail payload for public
